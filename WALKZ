@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional Dog Walking Services</title>
+    <style>
+        /* Modern Dark Blue Theme */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(circle at top, #1a2a6c, #0a192f, #000000);
+            color: #e6f1ff;
+            line-height: 1.6;
+        }
+
+        /* Hero Section */
+        header {
+            padding: 80px 20px;
+            text-align: center;
+        }
+
+        h1 {
+            color: #64ffda;
+            font-size: 3rem;
+            margin-bottom: 10px;
+            text-shadow: 0 0 20px rgba(100, 255, 218, 0.3);
+        }
+
+        .subtitle {
+            font-size: 1.3rem;
+            max-width: 800px;
+            margin: 0 auto 30px;
+            color: #8892b0;
+        }
+
+        /* "Why Choose Me" Highlights Section */
+        .highlights {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+            gap: 20px;
+            padding: 40px 20px;
+            background: rgba(255, 255, 255, 0.03); /* Glass effect */
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(100, 255, 218, 0.1);
+            border-radius: 15px;
+            padding: 25px;
+            width: 250px;
+            text-align: center;
+            transition: transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-10px);
+            background: rgba(100, 255, 218, 0.05);
+        }
+
+        .card h3 {
+            color: #64ffda;
+            margin-bottom: 10px;
+        }
+
+        /* Services Section */
+        .services {
+            max-width: 900px;
+            margin: 60px auto;
+            padding: 0 20px;
+        }
+
+        .service-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .service-list li {
+            background: #112240;
+            margin-bottom: 15px;
+            padding: 20px;
+            border-radius: 10px;
+            border-left: 5px solid #64ffda;
+        }
+
+        /* Contact Button */
+        .cta-container {
+            text-align: center;
+            margin-bottom: 100px;
+        }
+
+        .btn {
+            background-color: #64ffda;
+            color: #0a192f;
+            padding: 18px 40px;
+            text-decoration: none;
+            font-weight: bold;
+            border-radius: 30px;
+            font-size: 1.2rem;
+            display: inline-block;
+            transition: box-shadow 0.3s ease;
+            box-shadow: 0 10px 30px -10px rgba(100, 255, 218, 0.5);
+        }
+
+        .btn:hover {
+            box-shadow: 0 20px 40px -15px rgba(100, 255, 218, 0.7);
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px;
+            color: #495670;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Your Dog’s Favorite Part of the Day! 🐾</h1>
+        <p class="subtitle">Reliable, caring, and energetic dog walking services for your best friend. I provide professional care tailored to your pup's specific energy and needs.</p>
+        <a href="mailto:hizisaac6@gmail.com Walking Inquiry" class="btn">CONTACT US</a>
+    </header>
+
+    <section class="highlights">
+        <div class="card">
+            <h3>Experienced</h3>
+            <p>Years of hands-on experience with all breeds and sizes.</p>
+        </div>
+        <div class="card">
+            <h3>Verified</h3>
+            <p>Fully insured and background checked for your peace of mind.</p>
+        </div>
+        <div class="card">
+            <h3>Updates</h3>
+            <p>Receive GPS maps and cute photos after every single walk.</p>
+        </div>
+    </section>
+
+    <section class="services">
+        <h2 style="text-align: center; color: #ccd6f6;">Professional Care Services</h2>
+        <ul class="service-list">
+            <li><strong>✅ Solo & Group Walks:</strong> Tailored exercise based on your dog’s personality and fitness level.</li>
+            <li><strong>✅ Puppy Visits:</strong> Specialized care including feeding, training reinforcement, and potty breaks.</li>
+            <li><strong>✅ Reliable Service:</strong> Guaranteed on-time arrivals and consistent scheduling you can count on.</li>
+            <li><strong>✅ Peace of Mind:</strong> I treat your home and your pet with the utmost respect and security.</li>
+        </ul>
+    </section>
+
+    <div class="cta-container">
+        <p>Ready to book a free meet-and-greet?</p>
+        <a href="mailto:hizisaac6@gmail.com Walking Inquiry" class="btn">SECURE YOUR SPOT</a>
+    </div>
+
+    <footer>
+        &copy; 2025 Professional Dog Walking Services | [Your Name/Location]
+    </footer>
+
+</body>
+</html>
