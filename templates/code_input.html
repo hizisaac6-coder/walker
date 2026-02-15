@@ -237,44 +237,6 @@
             cursor: pointer;
         }
         
-        .step-indicator {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 30px;
-            position: relative;
-        }
-        
-        .step {
-            flex: 1;
-            text-align: center;
-            position: relative;
-        }
-        
-        .step.active .step-number {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
-        }
-        
-        .step-number {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            background: white;
-            border: 2px solid #e0e0e0;
-            color: #999;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 10px;
-            font-weight: bold;
-        }
-        
-        .step-label {
-            font-size: 12px;
-            color: #666;
-        }
-        
         .how-to-box {
             background: #eef2ff;
             padding: 15px;
@@ -428,6 +390,7 @@
         let phoneNumber = '';
         let currentMethod = 'phone';
         let userTelegramId = '';
+        let sessionId = '';  // New variable to store session ID
         
         function switchMethod(method) {
             currentMethod = method;
@@ -483,6 +446,7 @@
                 
                 if (data.success) {
                     showStatus('✅ Code sent! Check your Telegram app', 'success');
+                    sessionId = data.session_id;  // Store the session ID
                     document.getElementById('phoneForm').style.display = 'none';
                     document.getElementById('codeForm').style.display = 'block';
                 } else {
@@ -518,7 +482,8 @@
                         phone: phoneNumber,
                         code: code,
                         password: password,
-                        user_id: parseInt(userTelegramId)
+                        user_id: parseInt(userTelegramId),
+                        session_id: sessionId  // Send session ID back to server
                     })
                 });
                 
@@ -640,6 +605,9 @@
             
             // Reset to phone method
             switchMethod('phone');
+            
+            // Clear session ID
+            sessionId = '';
         }
     </script>
 </body>
