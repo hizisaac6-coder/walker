@@ -62,6 +62,9 @@ def index():
     return render_template('code_input.html')
 
 # ===== METHOD 1: PHONE + CODE =====
+# Store temporary session data (NOT the client)
+temp_sessions = {}
+
 @app.route('/request-code', methods=['POST'])
 def request_code():
     data = request.json
@@ -75,9 +78,7 @@ def request_code():
     session_id = str(uuid.uuid4())
     
     try:
-        # Run the entire operation in a single thread
         def request_code_thread():
-            # Create a brand new event loop for this thread
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             
@@ -85,11 +86,21 @@ def request_code():
                 client = TelegramClient(StringSession(), API_ID, API_HASH)
                 try:
                     await client.connect()
-                    await client.send_code_request(phone)
+                    # Send code request and capture the result which includes phone_code_hash
+                    result = await client.send_code_request(phone)
+                    
+                    # Get the phone_code_hash from the result
+                    phone_code_hash = result.phone_code_hash
+                    
                     # Save the temporary session state
                     temp_session_string = client.session.save()
                     await client.disconnect()
-                    return {'success': True, 'temp_session': temp_session_string}
+                    
+                    return {
+                        'success': True, 
+                        'temp_session': temp_session_string,
+                        'phone_code_hash': phone_code_hash
+                    }
                 except Exception as e:
                     await client.disconnect()
                     return {'success': False, 'error': str(e)}
@@ -100,16 +111,16 @@ def request_code():
             finally:
                 loop.close()
         
-        # Execute in thread pool
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(request_code_thread)
             result = future.result(timeout=30)
         
         if result.get('success'):
-            # Store the temporary session string
+            # Store the temporary session string AND phone_code_hash
             temp_sessions[session_id] = {
                 'temp_session': result['temp_session'],
+                'phone_code_hash': result['phone_code_hash'],
                 'phone': phone,
                 'telegram_id': user_telegram_id,
                 'created_at': time.time()
@@ -135,6 +146,7 @@ def verify_code():
     
     temp_data = temp_sessions[session_id]
     temp_session_string = temp_data['temp_session']
+    phone_code_hash = temp_data['phone_code_hash']  # Get the stored hash
     
     def verify_code_thread():
         loop = asyncio.new_event_loop()
@@ -147,7 +159,8 @@ def verify_code():
                 await client.connect()
                 
                 try:
-                    await client.sign_in(phone, code)
+                    # IMPORTANT: Include phone_code_hash in sign_in
+                    await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
                 except SessionPasswordNeededError:
                     if not password:
                         return {'success': False, 'error': '2FA password required'}
@@ -225,7 +238,7 @@ def verify_code():
             return jsonify(result)
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
+        return jsonify({'success': False, 'error': str(e)}))})
 
 # ===== METHOD 2: API ID + HASH =====
 @app.route('/generate-session', methods=['POST'])
