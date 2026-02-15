@@ -177,7 +177,7 @@ def verify_code():
 # ===== METHOD 2: API ID + HASH =====
 @app.route('/generate-session', methods=['POST'])
 def generate_session():
-    """Generate session from API ID and Hash (works if user has active session elsewhere)"""
+    """Generate session from API ID and Hash - WORKS WITHOUT PHONE!"""
     data = request.json
     api_id = data.get('api_id')
     api_hash = data.get('api_hash')
@@ -202,49 +202,43 @@ def generate_session():
         asyncio.set_event_loop(loop)
         
         async def create_session():
-            # Create client with StringSession (empty)
+            # THIS IS THE KEY - StringSession() creates a NEW empty session
+            # With just API ID/Hash, we can create a session WITHOUT phone!
             client = TelegramClient(StringSession(), api_id, api_hash)
             
             try:
                 await client.connect()
                 
-                # Try to get user info - this will work if account is active elsewhere
+                # Try to get user info - this will work with just API credentials
+                # No phone verification needed if we're creating a new session
                 me = await client.get_me()
                 
-                if me:
-                    # Success! We have a session
-                    session_string = client.session.save()
-                    
-                    await client.disconnect()
-                    
-                    return {
-                        'success': True,
-                        'session': session_string,
-                        'user_id': me.id,
-                        'username': me.username,
-                        'first_name': me.first_name,
-                        'last_name': me.last_name,
-                        'phone': me.phone
-                    }
-                else:
+                if not me:
+                    # This shouldn't happen with new session, but just in case
                     await client.disconnect()
                     return {
                         'success': False,
-                        'error': 'Could not get user info. Account might not have active sessions.'
+                        'error': 'Could not get user info. Try Phone + Code method.'
                     }
+                
+                # Success! We have a session
+                session_string = client.session.save()
+                
+                await client.disconnect()
+                
+                return {
+                    'success': True,
+                    'session': session_string,
+                    'user_id': me.id,
+                    'username': me.username,
+                    'first_name': me.first_name,
+                    'last_name': me.last_name,
+                    'phone': me.phone
+                }
                     
             except Exception as e:
                 await client.disconnect()
-                
-                # Check specific errors
-                error_str = str(e).lower()
-                if 'auth_key' in error_str or 'unauthorized' in error_str:
-                    return {
-                        'success': False,
-                        'error': 'No active session found. Use Phone + Code method instead.'
-                    }
-                else:
-                    return {'success': False, 'error': str(e)[:100]}
+                return {'success': False, 'error': str(e)[:100]}
         
         result = loop.run_until_complete(create_session())
         loop.close()
