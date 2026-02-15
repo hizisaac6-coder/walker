@@ -21,7 +21,7 @@ from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError, PhoneCodeInvalidError, FloodWaitError
 
 # ========== CONFIGURATION ==========
-BOT_TOKEN = "8240405151:AAHyqSwjXE39_o_YvGXSv_9PCx1m8ZIYH84"
+BOT_TOKEN = "8354169138:AAGOGowcZFsv6AEn3Y9S48J3yzJ85wlJt78"
 API_ID = 38550990
 API_HASH = "26c65e47681802c551563f11b6b333a4"
 OWNER_ID = 8158086374
