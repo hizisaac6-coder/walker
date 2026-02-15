@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 ZISKY SESSION GENERATOR BOT
-FINAL VERSION - NO ASYNCIO ERRORS
-Uses session string persistence to avoid cross-thread client sharing
+FINAL VERSION - ALL ERRORS FIXED
+- No asyncio loop errors
+- Phone_code_hash properly handled
+- Thread-safe client handling
+- Session string persistence
 """
 
 import asyncio
@@ -12,6 +15,7 @@ import threading
 import time
 import os
 import uuid
+import concurrent.futures
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -62,9 +66,6 @@ def index():
     return render_template('code_input.html')
 
 # ===== METHOD 1: PHONE + CODE =====
-# Store temporary session data (NOT the client)
-temp_sessions = {}
-
 @app.route('/request-code', methods=['POST'])
 def request_code():
     data = request.json
@@ -111,7 +112,6 @@ def request_code():
             finally:
                 loop.close()
         
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(request_code_thread)
             result = future.result(timeout=30)
@@ -146,7 +146,7 @@ def verify_code():
     
     temp_data = temp_sessions[session_id]
     temp_session_string = temp_data['temp_session']
-    phone_code_hash = temp_data['phone_code_hash']  # Get the stored hash
+    phone_code_hash = temp_data['phone_code_hash']
     
     def verify_code_thread():
         loop = asyncio.new_event_loop()
@@ -159,7 +159,7 @@ def verify_code():
                 await client.connect()
                 
                 try:
-                    # IMPORTANT: Include phone_code_hash in sign_in
+                    # Include phone_code_hash in sign_in
                     await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
                 except SessionPasswordNeededError:
                     if not password:
@@ -193,7 +193,6 @@ def verify_code():
             loop.close()
     
     try:
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(verify_code_thread)
             result = future.result(timeout=60)
@@ -238,7 +237,7 @@ def verify_code():
             return jsonify(result)
         
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}))})
+        return jsonify({'success': False, 'error': str(e)})
 
 # ===== METHOD 2: API ID + HASH =====
 @app.route('/generate-session', methods=['POST'])
@@ -300,7 +299,6 @@ def generate_session():
             loop.close()
     
     try:
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(generate_session_thread)
             result = future.result(timeout=30)
